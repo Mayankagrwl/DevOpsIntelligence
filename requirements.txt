@@ -1,0 +1,11 @@
+streamlit
+ollama
+chromadb
+python-dotenv
+requests
+sseclient-py
+langchain-ollama
+langchain-core
+langchain-community
+langchain
+pydantic
