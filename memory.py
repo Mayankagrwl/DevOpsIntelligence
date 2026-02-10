@@ -19,10 +19,24 @@ class DevOpsMemory:
             model_name=os.getenv("OLLAMA_EMBED_MODEL", "llama3.1")
         )
         
-        self.collection = self.client.get_or_create_collection(
-            name="devops_history",
-            embedding_function=self.embedding_fn
-        )
+        # Handle collection creation with conflict resolution
+        # If the embedding function changes (e.g. default -> ollama), Chroma throws a ValueError
+        try:
+            self.collection = self.client.get_or_create_collection(
+                name="devops_history",
+                embedding_function=self.embedding_fn
+            )
+        except ValueError as e:
+            if "Embedding function conflict" in str(e):
+                # If there's a conflict, the old data is incompatible anyway.
+                # Recreate the collection with the new local embedding model.
+                self.client.delete_collection("devops_history")
+                self.collection = self.client.create_collection(
+                    name="devops_history",
+                    embedding_function=self.embedding_fn
+                )
+            else:
+                raise e
 
     def store_interaction(self, query, resolution):
         """Stores a resolved interaction in memory."""
