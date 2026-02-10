@@ -16,17 +16,81 @@ class DevOpsOrchestrator:
         self.k8sgpt_mcp = K8sGPTMCPClient()
         
     def get_tool_definitions(self):
-        """Returns tool definitions for Ollama's native tool calling."""
+        """
+        Tool definitions for Ollama — names match containers/kubernetes-mcp-server.
+        These are the names the LLM will output, and execute_tool will route them.
+        """
         return [
             {
                 "type": "function",
                 "function": {
-                    "name": "list_pods",
-                    "description": "List all pods in a given Kubernetes namespace. Use this when the user asks about running pods, workloads, or deployments in their cluster.",
+                    "name": "pods_list_in_namespace",
+                    "description": "List all Kubernetes pods in a specific namespace. Use when user asks about pods, workloads, or deployments in a namespace.",
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "namespace": {"type": "string", "description": "The K8s namespace (default: default)"}
+                            "namespace": {"type": "string", "description": "Namespace to list pods from (required)"}
+                        },
+                        "required": ["namespace"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "pods_list",
+                    "description": "List all Kubernetes pods across ALL namespaces. Use when user asks about all pods in the cluster without specifying a namespace.",
+                    "parameters": {"type": "object", "properties": {}}
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "pods_log",
+                    "description": "Get logs from a specific Kubernetes pod. Use when the user asks to see logs or debug a specific pod.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string", "description": "Name of the Pod to get logs from"},
+                            "namespace": {"type": "string", "description": "Namespace of the Pod"},
+                            "tail": {"type": "integer", "description": "Number of lines from end (default: 100)"}
+                        },
+                        "required": ["name"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "pods_get",
+                    "description": "Get details of a specific Kubernetes pod by name.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string", "description": "Name of the Pod"},
+                            "namespace": {"type": "string", "description": "Namespace of the Pod"}
+                        },
+                        "required": ["name"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "namespaces_list",
+                    "description": "List all Kubernetes namespaces in the cluster.",
+                    "parameters": {"type": "object", "properties": {}}
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "events_list",
+                    "description": "List Kubernetes events for debugging and troubleshooting.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "namespace": {"type": "string", "description": "Optional namespace to filter events"}
                         }
                     }
                 }
@@ -34,31 +98,8 @@ class DevOpsOrchestrator:
             {
                 "type": "function",
                 "function": {
-                    "name": "get_pod_logs",
-                    "description": "Retrieve logs for a specific pod. Use when the user asks to see logs or debug a specific pod.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "pod_name": {"type": "string", "description": "Name of the pod"},
-                            "namespace": {"type": "string", "description": "The K8s namespace"}
-                        },
-                        "required": ["pod_name"]
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "analyze_cluster",
-                    "description": "Perform full cluster health analysis using K8sGPT. Use when asked about cluster health, issues, or diagnostics.",
-                    "parameters": {"type": "object", "properties": {}}
-                }
-            },
-            {
-                "type": "function",
-                "function": {
                     "name": "query_metrics",
-                    "description": "Query Grafana/Prometheus metrics using PromQL. Use when user asks about CPU, memory, network, or other metrics.",
+                    "description": "Query Grafana/Prometheus metrics using PromQL.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -72,7 +113,7 @@ class DevOpsOrchestrator:
                 "type": "function",
                 "function": {
                     "name": "query_db",
-                    "description": "Execute a SQL query against the database. Use when user asks to query, audit, or inspect database tables.",
+                    "description": "Execute a SQL query against the database.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -85,14 +126,29 @@ class DevOpsOrchestrator:
         ]
 
     def execute_tool(self, name, args):
-        """Routes a tool call to the correct MCP client."""
+        """Routes tool calls to the correct MCP client."""
         try:
-            if name == "list_pods":
-                return self.k8s_client.list_pods(args.get("namespace", "default"))
+            # --- K8s MCP tools (containers/kubernetes-mcp-server) ---
+            if name == "pods_list_in_namespace":
+                return self.k8s_client.list_pods(namespace=args.get("namespace"))
+            elif name == "pods_list":
+                return self.k8s_client.list_pods()
+            elif name == "pods_log":
+                return self.k8s_client.get_pod_logs(args.get("name"), namespace=args.get("namespace"))
+            elif name == "pods_get":
+                return self.k8s_client.get_pod(args.get("name"), namespace=args.get("namespace"))
+            elif name == "namespaces_list":
+                return self.k8s_client.list_namespaces()
+            elif name == "events_list":
+                return self.k8s_client.list_events(namespace=args.get("namespace"))
+            # --- Legacy tool names (fallback for models that use our old names) ---
+            elif name == "list_pods":
+                return self.k8s_client.list_pods(namespace=args.get("namespace", "default"))
             elif name == "get_pod_logs":
-                return self.k8s_client.get_pod_logs(args.get("pod_name"), args.get("namespace", "default"))
+                return self.k8s_client.get_pod_logs(args.get("pod_name") or args.get("name"), namespace=args.get("namespace"))
             elif name == "analyze_cluster":
                 return self.k8sgpt_mcp.analyze_cluster()
+            # --- Other MCP tools ---
             elif name == "query_metrics":
                 return self.grafana_mcp.query_metrics(args.get("query"))
             elif name == "query_db":
@@ -154,16 +210,28 @@ class DevOpsOrchestrator:
                 yield {"message": {"content": response}}
                 return
             
-            message = response.get("message", {})
-            content = message.get("content", "")
+            # A. Access message components safely (handles both dict and object/pydantic results)
+            if hasattr(response, 'message'):
+                message = response.message
+                content = getattr(message, 'content', "")
+                tool_calls = getattr(message, 'tool_calls', [])
+            else:
+                message = response.get("message", {})
+                content = message.get("content", "")
+                tool_calls = message.get("tool_calls", [])
             
-            # Check if model wants to call tools (structured tool_calls from Ollama)
-            if message.get("tool_calls"):
-                current_messages.append(message)
+            # 1. Check if model wants to call tools (structured tool_calls from Ollama)
+            if tool_calls:
+                current_messages.append({"role": "assistant", "content": content, "tool_calls": tool_calls})
                 
-                for tool_call in message["tool_calls"]:
-                    name = tool_call["function"]["name"]
-                    args = tool_call["function"]["arguments"]
+                for tool_call in tool_calls:
+                    # Handle both dict and object tool calls
+                    if hasattr(tool_call, 'function'):
+                        name = tool_call.function.name
+                        args = tool_call.function.arguments
+                    else:
+                        name = tool_call["function"]["name"]
+                        args = tool_call["function"]["arguments"]
                     
                     # Notify UI
                     yield {"status": f"🔧 Executing {name}..."}
@@ -179,10 +247,61 @@ class DevOpsOrchestrator:
                 # Continue loop so LLM can see tool results and respond
                 continue
             
-            # No tool calls — this is the final answer
+            # 2. Fallback: Foolproof detection of tool calls embedded as JSON TEXT in content
+            # This handles cases where models don't use the official API but still try to use tools.
+            if content and ('"name"' in content or '"arguments"' in content):
+                try:
+                    # Search for the outermost JSON-like structure in the content
+                    # We look for something starting with { and ending with }
+                    match = re.search(r'(\{.*\})', content, re.DOTALL)
+                    if match:
+                        obj_str = match.group(1)
+                        try:
+                            tool_json = json.loads(obj_str)
+                            name = tool_json.get("name")
+                            args = tool_json.get("arguments", {})
+                            
+                            # Normalization map
+                            name_map = {
+                                "list_pods": "pods_list_in_namespace",
+                                "pods_list": "pods_list_in_namespace",
+                                "get_pod_logs": "pods_log",
+                                "pods_get": "pods_get"
+                            }
+                            mapped_name = name_map.get(name, name)
+                            
+                            if mapped_name and (mapped_name in [t["function"]["name"] for t in tools]):
+                                yield {"status": f"🔧 Intercepted tool call: {mapped_name}..."}
+                                
+                                # Execute
+                                result = self.execute_tool(mapped_name, args)
+                                
+                                # Force a summary response
+                                summary_msg = [
+                                    {"role": "assistant", "content": content},
+                                    {"role": "user", "content": f"The tool '{mapped_name}' returned:\n{json.dumps(result, indent=2)}\n\nSummarize this for me in a natural, helpful way. Skip any raw technical details."}
+                                ]
+                                final_res = self.brain.get_response(skill, current_messages + summary_msg, tools=None, stream=True)
+                                
+                                if isinstance(final_res, str):
+                                    yield {"message": {"content": final_res}}
+                                else:
+                                    for chunk in final_res:
+                                        yield chunk
+                                return
+                        except:
+                            pass
+                except Exception as e:
+                    pass # Fall through if regex or logic fails
+            
+            # 3. Final answer — regular text content
+            # If we reached here and haven't returned, this is the final answer.
+            # Safety: If it looks like JSON, but we couldn't execute it, don't show it as a final answer.
             if content:
-                # We already have the content from the non-streaming call
-                yield response
+                if '{"name":' in content and '"arguments":' in content:
+                    yield {"message": {"content": "I tried to fetch that information for you but encountered a formatting issue. Could you please specify which pods or namespace you're interested in?"}}
+                else:
+                    yield {"message": {"content": content}}
                 return
             
             # Edge case: no content AND no tool calls after tool results

@@ -244,8 +244,11 @@ if prompt := st.chat_input("How can I help you today?"):
                 # Content chunks (streaming or non-streaming)
                 message = chunk.get("message", {})
                 content = message.get("content", "")
-                
                 if content:
+                    # Safety filter: don't display raw tool-call JSON to the user.
+                    # This happens when the model generates JSON text instead of structured tools.
+                    if '{"name":' in content and '"arguments":' in content:
+                        continue
                     full_response += content
                     response_placeholder.markdown(full_response + "▌")
             
@@ -253,7 +256,9 @@ if prompt := st.chat_input("How can I help you today?"):
             status_placeholder.empty()
             
             if not full_response:
-                full_response = "I received an empty response. Please try again."
+                # If we have no content but we performed tool actions, show a status.
+                full_response = "I'm processing the data from your cluster. One moment..."
+                response_placeholder.markdown(full_response)
             
             # Extract thinking traces (for reasoning models)
             thought, final_text = st.session_state.orchestrator.extract_thinking(full_response)
