@@ -111,19 +111,19 @@ class DevOpsOrchestrator:
         tools = self.get_tool_definitions()
         
         # Limit loop to prevent infinite runs
-        for _ in range(5):
+        for i in range(5):
+            # Use non-streaming for intermediate reasoning/tool calls
             response = self.brain.get_response(skill, current_messages, tools=tools, stream=False)
             message = response.get("message", {})
+            content = message.get("content", "")
             
-            # If the model wants to call tools
+            # 1. Check for official tool calls
             if "tool_calls" in message and message["tool_calls"]:
                 current_messages.append(message)
                 
                 for tool in message["tool_calls"]:
                     name = tool["function"]["name"]
                     args = tool["function"]["arguments"]
-                    
-                    # Notify UI of tool execution via a custom yield format
                     yield {"status": f"🔧 Executing {name}...", "tool": name, "args": args}
                     
                     result = self.execute_tool(name, args)
@@ -132,17 +132,41 @@ class DevOpsOrchestrator:
                         "name": name,
                         "content": json.dumps(result)
                     })
-                
-                # After tool results are added, loop back to let the LLM reason
-                continue
+                continue # Loop back to let the LLM see results and reason
+
+            # 2. Check for "Raw JSON" tool calls (some models output text instead of structured tools)
+            # This is a fallback to catch the behavior seen in the user's screenshot
+            if '{"name":' in content and '"arguments":' in content:
+                try:
+                    # Very basic parser for a single JSON block in content
+                    tool_json = json.loads(content[content.find('{'):content.rfind('}')+1])
+                    name = tool_json.get("name")
+                    args = tool_json.get("arguments", {})
+                    if name:
+                        yield {"status": f"🔧 Executing {name}...", "tool": name, "args": args}
+                        result = self.execute_tool(name, args)
+                        current_messages.append({"role": "assistant", "content": content})
+                        current_messages.append({"role": "tool", "name": name, "content": json.dumps(result)})
+                        continue
+                except:
+                    pass
+
+            # 3. If no tools were called, this is the final answer
+            # If we are on the first turn (i == 0) and the model just answered, 
+            # we want to re-stream it for a better UI experience? Actually, 
+            # if we have content, just yield it. If we want streaming, we should 
+            # ideally have called it with stream=True first, but for ReAct 
+            # we need to check tool_calls first.
             
-            # If no tools, it's the final turn - stream it to the UI
-            if "tool_calls" not in message or not message["tool_calls"]:
+            if content:
+                yield response
+                break
+            
+            # If message is empty but we just had tool results, call one last time to get the final answer
+            if i > 0:
                 final_stream = self.brain.get_response(skill, current_messages, tools=tools, stream=True)
                 for chunk in final_stream:
                     yield chunk
-                break
-            
             break
 
     def langgraph_statemachine_placeholder(self):

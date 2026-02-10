@@ -246,17 +246,22 @@ if prompt := st.chat_input("How can I help you today?"):
             
             for chunk in stream:
                 if "status" in chunk:
-                    # Display tool execution status in the reasoning or a dedicated area
                     thinking_placeholder.info(chunk["status"])
-                    time.sleep(0.5) # Brief pause for visibility
                 
-                if "message" in chunk and "content" in chunk["message"]:
-                    content = chunk["message"]["content"]
+                # Identify if this chunk is a tool call (to be hidden) or content (to be shown)
+                message = chunk.get("message", {})
+                content = message.get("content", "")
+                
+                has_tool_call = "tool_calls" in message and message["tool_calls"]
+                is_raw_json = '{"name":' in content and '"arguments":' in content
+                
+                if not has_tool_call and not is_raw_json and content:
                     full_response += content
                     response_placeholder.markdown(full_response + "▌")
             
-            # Clean up status after completion
-            thinking_placeholder.empty()
+            # Final render without cursor
+            if full_response:
+                response_placeholder.markdown(full_response)
             
             thought, final_text = st.session_state.orchestrator.extract_thinking(full_response)
             
