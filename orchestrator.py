@@ -73,6 +73,36 @@ class DevOpsOrchestrator:
             {
                 "type": "function",
                 "function": {
+                    "name": "get_pod_details",
+                    "description": "Get complete metadata for a specific pod (equivalent to 'kubectl describe'). Includes images, container states, and conditions.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string", "description": "Pod name"},
+                            "namespace": {"type": "string", "description": "Pod namespace (default: default)"}
+                        },
+                        "required": ["name"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_deployment_details",
+                    "description": "Get detailed metadata for a specific deployment. Includes replicas, update strategy, and selection markers.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string", "description": "Deployment name"},
+                            "namespace": {"type": "string", "description": "Namespace (default: default)"}
+                        },
+                        "required": ["name"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
                     "name": "get_events",
                     "description": "Get recent Kubernetes events in a namespace for troubleshooting.",
                     "parameters": {
@@ -81,6 +111,243 @@ class DevOpsOrchestrator:
                             "namespace": {"type": "string", "description": "Namespace to check events for"}
                         }
                     }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "list_services",
+                    "description": "List services in a specific Kubernetes namespace. Use 'all' for all namespaces.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "namespace": {"type": "string", "description": "Namespace name (default: default)"}
+                        }
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_service_details",
+                    "description": "Get detailed metadata for a specific service (ports, selector, type).",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string", "description": "Service name"},
+                            "namespace": {"type": "string", "description": "Namespace (default: default)"}
+                        },
+                        "required": ["name"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "list_configmaps",
+                    "description": "List configmaps in a specific namespace.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "namespace": {"type": "string", "description": "Namespace (default: default)"}
+                        }
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_configmap_details",
+                    "description": "Get keys and metadata for a specific configmap.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string", "description": "ConfigMap name"},
+                            "namespace": {"type": "string", "description": "Namespace (default: default)"}
+                        },
+                        "required": ["name"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "list_secrets",
+                    "description": "List secrets in a specific namespace.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "namespace": {"type": "string", "description": "Namespace (default: default)"}
+                        }
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_secret_details",
+                    "description": "Get keys and metadata for a specific secret (does not reveal values by default).",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string", "description": "Secret name"},
+                            "namespace": {"type": "string", "description": "Namespace (default: default)"}
+                        },
+                        "required": ["name"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "list_nodes",
+                    "description": "List all physical/virtual nodes in the cluster with status and version.",
+                    "parameters": {"type": "object", "properties": {}}
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_node_details",
+                    "description": "Get exhaustive metadata for a specific cluster node.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string", "description": "Node name"}
+                        },
+                        "required": ["name"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_cluster_info",
+                    "description": "Get overall cluster information and Kubernetes version.",
+                    "parameters": {"type": "object", "properties": {}}
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "delete_resource",
+                    "description": "Delete a Kubernetes resource (Pod, Deployment, Service, etc.). CAUTION: This is destructive.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "kind": {"type": "string", "description": "Resource kind (pod, deployment, service, secret, configmap)"},
+                            "name": {"type": "string", "description": "Resource name"},
+                            "namespace": {"type": "string", "description": "Namespace (default: default)"}
+                        },
+                        "required": ["kind", "name"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "create_namespace",
+                    "description": "Create a new Kubernetes namespace.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string", "description": "Name of the new namespace"}
+                        },
+                        "required": ["name"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "apply_manifest",
+                    "description": "Apply a Kubernetes manifest (YAML) to the cluster. Equivalent to 'kubectl apply -f'.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "manifest_yaml": {"type": "string", "description": "The complete YAML content of the manifest"},
+                            "namespace": {"type": "string", "description": "Target namespace (optional)"}
+                        },
+                        "required": ["manifest_yaml"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_node_metrics",
+                    "description": "Get resource usage metrics (CPU/Memory) for all nodes.",
+                    "parameters": {"type": "object", "properties": {}}
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "exec_command",
+                    "description": "Execute a shell command inside a pod's container. Use this to fetch config files, check processes, or run internal diagnostics.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "pod_name": {"type": "string", "description": "Name of the pod"},
+                            "command": {"type": "string", "description": "Shell command to run (e.g., 'ls -la', 'cat /etc/hosts')"},
+                            "namespace": {"type": "string", "description": "Pod namespace (default: default)"},
+                            "container": {"type": "string", "description": "Specific container name (optional)"}
+                        },
+                        "required": ["pod_name", "command"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "delete_resource",
+                    "description": "Delete a Kubernetes resource (Pod, Deployment, Service, etc.). CAUTION: This is destructive.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "kind": {"type": "string", "description": "Resource kind (pod, deployment, service, secret, configmap)"},
+                            "name": {"type": "string", "description": "Resource name"},
+                            "namespace": {"type": "string", "description": "Namespace (default: default)"}
+                        },
+                        "required": ["kind", "name"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "create_namespace",
+                    "description": "Create a new Kubernetes namespace.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string", "description": "Name of the new namespace"}
+                        },
+                        "required": ["name"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "apply_manifest",
+                    "description": "Apply a Kubernetes manifest (YAML) to the cluster. Equivalent to 'kubectl apply -f'.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "manifest_yaml": {"type": "string", "description": "The complete YAML content of the manifest"},
+                            "namespace": {"type": "string", "description": "Target namespace (optional)"}
+                        },
+                        "required": ["manifest_yaml"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_node_metrics",
+                    "description": "Get resource usage metrics (CPU/Memory) for all nodes.",
+                    "parameters": {"type": "object", "properties": {}}
                 }
             },
             {
@@ -129,8 +396,59 @@ class DevOpsOrchestrator:
                     namespace=args.get("namespace", "default"),
                     tail=args.get("tail", 100)
                 )
+            elif name in ["get_pod_details", "pods_get", "describe_pod"]:
+                return self.k8s_client.get_pod_details(
+                    args.get("name"), 
+                    namespace=args.get("namespace", "default")
+                )
+            elif name in ["get_deployment_details", "describe_deployment"]:
+                return self.k8s_client.get_deployment_details(
+                    args.get("name"), 
+                    namespace=args.get("namespace", "default")
+                )
             elif name == "get_events":
                 return self.k8s_client.get_events(namespace=args.get("namespace", "default"))
+            elif name == "exec_command":
+                return self.k8s_client.exec_command(
+                    args.get("pod_name") or args.get("name"),
+                    args.get("command"),
+                    namespace=args.get("namespace", "default"),
+                    container=args.get("container")
+                )
+            elif name == "delete_resource":
+                return self.k8s_client.delete_resource(
+                    args.get("kind"),
+                    args.get("name"),
+                    namespace=args.get("namespace", "default")
+                )
+            elif name == "create_namespace":
+                return self.k8s_client.create_namespace(args.get("name"))
+            elif name == "apply_manifest":
+                return self.k8s_client.apply_manifest(
+                    args.get("manifest_yaml"),
+                    namespace=args.get("namespace", "default")
+                )
+            elif name == "get_node_metrics":
+                return self.k8s_client.get_node_metrics()
+            
+            elif name == "list_services":
+                return self.k8s_client.list_services(namespace=args.get("namespace", "default"))
+            elif name == "get_service_details":
+                return self.k8s_client.get_service_details(args.get("name"), namespace=args.get("namespace", "default"))
+            elif name == "list_configmaps":
+                return self.k8s_client.list_configmaps(namespace=args.get("namespace", "default"))
+            elif name == "get_configmap_details":
+                return self.k8s_client.get_configmap_details(args.get("name"), namespace=args.get("namespace", "default"))
+            elif name == "list_secrets":
+                return self.k8s_client.list_secrets(namespace=args.get("namespace", "default"))
+            elif name == "get_secret_details":
+                return self.k8s_client.get_secret_details(args.get("name"), namespace=args.get("namespace", "default"))
+            elif name == "list_nodes":
+                return self.k8s_client.list_nodes()
+            elif name == "get_node_details":
+                return self.k8s_client.get_node_details(args.get("name"))
+            elif name == "get_cluster_info":
+                return self.k8s_client.get_cluster_info()
             
             # --- Legacy MCP fallbacks ---
             elif name == "analyze_cluster":
@@ -163,13 +481,16 @@ class DevOpsOrchestrator:
         
         # 2. Intent detection: does this query need live tools?
         env_keywords = [
-            "pod", "pods", "cluster", "node", "deploy", "namespace",
+            "pod", "pods", "cluster", "node", "nodes", "deploy", "namespace",
+            "service", "services", "secret", "secrets", "configmap", "configmaps",
             "log", "logs", "metric", "metrics", "alert",
             "database", "sql", "table", "schema",
             "repo", "repository", "pr", "pull request", "issue",
             "artifact", "image", "scan",
             "health", "status", "running", "crashed", "error",
-            "analyze", "triage", "diagnose"
+            "analyze", "triage", "diagnose", "describe", "inspect", "info", "version",
+            "exec", "run", "cmd", "command", "events", "event",
+            "delete", "remove", "create", "apply", "update", "top", "usage", "resource"
         ]
         query_lower = user_query.lower()
         needs_tools = any(keyword in query_lower for keyword in env_keywords)
@@ -267,7 +588,13 @@ class DevOpsOrchestrator:
                                     "pods_log": "get_pod_logs",
                                     "pods_get": "list_pods",
                                     "get_pods": "list_pods",
-                                    "list_namespaces": "list_namespaces"
+                                    "list_namespaces": "list_namespaces",
+                                    "get_cluster_info": "get_cluster_info",
+                                    "list_services": "list_services",
+                                    "list_nodes": "list_nodes",
+                                    "list_secrets": "list_secrets",
+                                    "list_configmaps": "list_configmaps",
+                                    "get_node_metrics": "get_node_metrics"
                                 }
                                 mapped_name = name_map.get(name, name)
                                 

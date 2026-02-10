@@ -242,6 +242,11 @@ if prompt := st.chat_input("How can I help you today?"):
         status_placeholder = st.empty()
         
         full_response = ""
+        
+        # DeepSeek UI Indicator
+        if "Technical" in active_skill or "SRE" in active_skill:
+            st.toast("💡 DeepSeek-R1 is reasoning about your request...", icon="🧠")
+        
         try:
             # Extract skill name without emoji for the orchestrator
             skill_name = active_skill.split(" ", 1)[-1] if " " in active_skill else active_skill

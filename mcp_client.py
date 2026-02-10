@@ -2,6 +2,8 @@ import os
 import asyncio
 import json
 import requests
+import subprocess
+import tempfile
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -9,6 +11,7 @@ load_dotenv()
 # --- Native Kubernetes Client ---
 try:
     from kubernetes import client, config
+    from kubernetes.stream import stream
     K8S_SDK_AVAILABLE = True
 except ImportError:
     K8S_SDK_AVAILABLE = False
@@ -65,6 +68,7 @@ class K8sNativeClient:
                 config.load_incluster_config()
             self.v1 = client.CoreV1Api()
             self.apps_v1 = client.AppsV1Api()
+            self.custom_api = client.CustomObjectsApi()
             self.initialized = True
         except Exception as e:
             print(f"K8s Init Error: {e}")
@@ -81,7 +85,8 @@ class K8sNativeClient:
                     "name": p.metadata.name,
                     "namespace": p.metadata.namespace,
                     "status": p.status.phase,
-                    "ip": p.status.pod_ip
+                    "ip": p.status.pod_ip,
+                    "node": p.spec.node_name
                 } for p in pods.items
             ]
         except Exception as e:
@@ -91,6 +96,31 @@ class K8sNativeClient:
         if not self.initialized: return {"error": "K8s client not initialized"}
         try:
             return self.v1.read_namespaced_pod_log(name, namespace, tail_lines=tail)
+        except Exception as e:
+            return {"error": str(e)}
+
+    def get_pod_details(self, name, namespace="default"):
+        """Get rich metadata for a specific pod (like kubectl describe)."""
+        if not self.initialized: return {"error": "K8s client not initialized"}
+        try:
+            p = self.v1.read_namespaced_pod(name, namespace)
+            return {
+                "name": p.metadata.name,
+                "namespace": p.metadata.namespace,
+                "status": p.status.phase,
+                "node": p.spec.node_name,
+                "start_time": str(p.status.start_time),
+                "images": [c.image for c in p.spec.containers],
+                "container_statuses": [
+                    {
+                        "name": s.name,
+                        "ready": s.ready,
+                        "restart_count": s.restart_count,
+                        "state": str(s.state)
+                    } for s in (p.status.container_statuses or [])
+                ],
+                "conditions": [{"type": c.type, "status": c.status} for c in p.status.conditions]
+            }
         except Exception as e:
             return {"error": str(e)}
 
@@ -116,18 +146,236 @@ class K8sNativeClient:
         except Exception as e:
             return {"error": str(e)}
 
+    def get_deployment_details(self, name, namespace="default"):
+        """Get rich metadata for a specific deployment."""
+        if not self.initialized: return {"error": "K8s client not initialized"}
+        try:
+            d = self.apps_v1.read_namespaced_deployment(name, namespace)
+            return {
+                "name": d.metadata.name,
+                "namespace": d.metadata.namespace,
+                "replicas": f"{d.status.ready_replicas or 0}/{d.spec.replicas}",
+                "updated_replicas": d.status.updated_replicas,
+                "strategy": d.spec.strategy.type,
+                "selector": d.spec.selector.match_labels,
+                "images": [c.image for c in d.spec.template.spec.containers],
+                "conditions": [{"type": c.type, "status": c.status, "message": c.message} for c in d.status.conditions]
+            }
+        except Exception as e:
+            return {"error": str(e)}
+
     def get_events(self, namespace="default"):
         if not self.initialized: return {"error": "K8s client not initialized"}
         try:
-            events = self.v1.list_namespaced_event(namespace)
+            if namespace == "all":
+                events = self.v1.list_event_for_all_namespaces()
+            else:
+                events = self.v1.list_namespaced_event(namespace)
+            
             return [
                 {
+                    "namespace": e.metadata.namespace if namespace == "all" else None,
                     "type": e.type,
                     "reason": e.reason,
                     "message": e.message,
-                    "object": e.involved_object.name
+                    "object": e.involved_object.name,
+                    "time": str(e.last_timestamp)
                 } for e in events.items
             ][-20:] # Last 20 events
+        except Exception as e:
+            return {"error": str(e)}
+
+    def exec_command(self, pod_name, command, namespace="default", container=None):
+        """Execute a non-interactive command inside a pod container."""
+        if not self.initialized: return {"error": "K8s client not initialized"}
+        try:
+            # We wrap the command in /bin/sh -c to allow for complex strings/pipes
+            exec_args = ['/bin/sh', '-c', command]
+            
+            resp = stream(self.v1.connect_get_namespaced_pod_exec,
+                          pod_name,
+                          namespace,
+                          command=exec_args,
+                          container=container,
+                          stderr=True, stdin=False,
+                          stdout=True, tty=False)
+            return {"output": resp}
+        except Exception as e:
+            return {"error": f"Exec failed: {str(e)}"}
+
+    def list_services(self, namespace="default"):
+        if not self.initialized: return {"error": "K8s client not initialized"}
+        try:
+            if namespace == "all":
+                objs = self.v1.list_service_for_all_namespaces()
+            else:
+                objs = self.v1.list_namespaced_service(namespace)
+            return [{"name": i.metadata.name, "type": i.spec.type, "cluster_ip": i.spec.cluster_ip} for i in objs.items]
+        except Exception as e:
+            return {"error": str(e)}
+
+    def get_service_details(self, name, namespace="default"):
+        if not self.initialized: return {"error": "K8s client not initialized"}
+        try:
+            i = self.v1.read_namespaced_service(name, namespace)
+            return {
+                "name": i.metadata.name,
+                "type": i.spec.type,
+                "cluster_ip": i.spec.cluster_ip,
+                "ports": [{"port": p.port, "protocol": p.protocol, "target_port": str(p.target_port)} for p in i.spec.ports],
+                "selector": i.spec.selector
+            }
+        except Exception as e:
+            return {"error": str(e)}
+
+    def list_configmaps(self, namespace="default"):
+        if not self.initialized: return {"error": "K8s client not initialized"}
+        try:
+            if namespace == "all":
+                objs = self.v1.list_config_map_for_all_namespaces()
+            else:
+                objs = self.v1.list_namespaced_config_map(namespace)
+            return [{"name": i.metadata.name, "namespace": i.metadata.namespace} for i in objs.items]
+        except Exception as e:
+            return {"error": str(e)}
+
+    def get_configmap_details(self, name, namespace="default"):
+        if not self.initialized: return {"error": "K8s client not initialized"}
+        try:
+            i = self.v1.read_namespaced_config_map(name, namespace)
+            return {"name": i.metadata.name, "data_keys": list(i.data.keys()) if i.data else []}
+        except Exception as e:
+            return {"error": str(e)}
+
+    def list_secrets(self, namespace="default"):
+        if not self.initialized: return {"error": "K8s client not initialized"}
+        try:
+            if namespace == "all":
+                objs = self.v1.list_secret_for_all_namespaces()
+            else:
+                objs = self.v1.list_namespaced_secret(namespace)
+            return [{"name": i.metadata.name, "type": i.type} for i in objs.items]
+        except Exception as e:
+            return {"error": str(e)}
+
+    def get_secret_details(self, name, namespace="default"):
+        if not self.initialized: return {"error": "K8s client not initialized"}
+        try:
+            i = self.v1.read_namespaced_secret(name, namespace)
+            return {"name": i.metadata.name, "type": i.type, "data_keys": list(i.data.keys()) if i.data else []}
+        except Exception as e:
+            return {"error": str(e)}
+
+    def list_nodes(self):
+        if not self.initialized: return {"error": "K8s client not initialized"}
+        try:
+            nodes = self.v1.list_node()
+            return [
+                {
+                    "name": n.metadata.name,
+                    "status": n.status.conditions[-1].type if n.status.conditions else "Unknown",
+                    "version": n.status.node_info.kubelet_version
+                } for n in nodes.items
+            ]
+        except Exception as e:
+            return {"error": str(e)}
+
+    def get_node_details(self, name):
+        if not self.initialized: return {"error": "K8s client not initialized"}
+        try:
+            n = self.v1.read_node(name)
+            return {
+                "name": n.metadata.name,
+                "labels": n.metadata.labels,
+                "capacity": n.status.capacity,
+                "info": str(n.status.node_info)
+            }
+        except Exception as e:
+            return {"error": str(e)}
+
+    def get_cluster_info(self):
+        if not self.initialized: return {"error": "K8s client not initialized"}
+        try:
+            # Requires version API
+            version = client.VersionApi().get_code()
+            return {
+                "git_version": version.git_version,
+                "platform": version.platform,
+                "build_date": version.build_date
+            }
+        except:
+            return {"status": "Connected (Version API hidden/unavailable)"}
+
+    def delete_resource(self, kind, name, namespace="default"):
+        """Delete a Kubernetes resource by kind and name."""
+        if not self.initialized: return {"error": "K8s client not initialized"}
+        try:
+            kind = kind.lower()
+            if kind in ["pod", "pods"]:
+                self.v1.delete_namespaced_pod(name, namespace)
+            elif kind in ["deployment", "deployments", "deploy"]:
+                self.apps_v1.delete_namespaced_deployment(name, namespace)
+            elif kind in ["service", "services", "svc"]:
+                self.v1.delete_namespaced_service(name, namespace)
+            elif kind in ["configmap", "cm"]:
+                self.v1.delete_namespaced_config_map(name, namespace)
+            elif kind in ["secret", "secrets"]:
+                self.v1.delete_namespaced_secret(name, namespace)
+            else:
+                return {"error": f"Unsupported resource kind: {kind}"}
+            return {"status": "Deleted", "kind": kind, "name": name, "namespace": namespace}
+        except Exception as e:
+            return {"error": str(e)}
+
+    def create_namespace(self, name):
+        """Create a new namespace."""
+        if not self.initialized: return {"error": "K8s client not initialized"}
+        try:
+            ns = client.V1Namespace(metadata=client.V1ObjectMeta(name=name))
+            self.v1.create_namespace(ns)
+            return {"status": "Created", "namespace": name}
+        except Exception as e:
+            return {"error": str(e)}
+
+    def get_node_metrics(self):
+        """Get resource usage metrics for nodes (requires metrics-server)."""
+        if not self.initialized: return {"error": "K8s client not initialized"}
+        try:
+            metrics = self.custom_api.list_cluster_custom_object(
+                "metrics.k8s.io", "v1beta1", "nodes"
+            )
+            return [
+                {
+                    "name": item["metadata"]["name"],
+                    "cpu": item["usage"]["cpu"],
+                    "memory": item["usage"]["memory"]
+                } for item in metrics.get("items", [])
+            ]
+        except Exception as e:
+            return {"error": f"Metrics API unavailable: {str(e)}"}
+
+    def apply_manifest(self, manifest_yaml, namespace="default"):
+        """Apply a raw YAML manifest using kubectl (for complex apply logic)."""
+        if not self.kubeconfig: return {"error": "KUBECONFIG_PATH not set"}
+        
+        try:
+            # Use kubectl directly for apply logic as it handles diffs better than python client
+            cmd = ["kubectl", "--kubeconfig", self.kubeconfig, "apply", "-f", "-"]
+            if namespace:
+                cmd.extend(["-n", namespace])
+            
+            process = subprocess.Popen(
+                cmd, 
+                stdin=subprocess.PIPE, 
+                stdout=subprocess.PIPE, 
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            stdout, stderr = process.communicate(input=manifest_yaml)
+            
+            if process.returncode != 0:
+                return {"error": stderr.strip()}
+            return {"output": stdout.strip()}
         except Exception as e:
             return {"error": str(e)}
 
