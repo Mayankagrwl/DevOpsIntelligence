@@ -7,9 +7,7 @@ services:
     env_file:
       - .env
     volumes:
-      - ./chroma_db:/app/chroma_db # Adjust this path based on your .env DOCS_RAG_PATH
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      - ./chroma_data:/app/chroma_data # Persistent Vector Database (Knowledge Base Storage)
     restart: unless-stopped
 
 networks:

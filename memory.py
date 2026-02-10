@@ -10,8 +10,14 @@ class DevOpsMemory:
         self.persist_directory = os.getenv("CHROMA_PATH", "./chroma_data")
         self.client = chromadb.PersistentClient(path=self.persist_directory)
         
-        # Using a local embedding function suitable for CPU
-        self.embedding_fn = embedding_functions.DefaultEmbeddingFunction()
+        # Use local Ollama for embeddings to avoid external DNS issues
+        ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434")
+        # Ensure we point to the /api endpoint if the library requires it, 
+        # but usually the base URL is enough for the OllamaEmbeddingFunction
+        self.embedding_fn = embedding_functions.OllamaEmbeddingFunction(
+            url=f"{ollama_url}/api/embeddings",
+            model_name=os.getenv("OLLAMA_EMBED_MODEL", "llama3.1")
+        )
         
         self.collection = self.client.get_or_create_collection(
             name="devops_history",

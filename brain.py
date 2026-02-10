@@ -9,48 +9,56 @@ class OllamaBrain:
         self.url = os.getenv("OLLAMA_URL", "http://localhost:11434")
         self.client = ollama.Client(host=self.url)
         
-        # Skill to Model mapping
-        self.skill_config = {
+        # Mapping of skills to their respective environment variable keys
+        self.skill_map = {
             "Technical Expert": {
-                "model": os.getenv("MODEL_TECH_EXPERT", "deepseek-r1:8b"),
-                "prompt": os.getenv("PROMPT_TECH_EXPERT")
+                "model_key": "MODEL_TECH_EXPERT",
+                "prompt_key": "PROMPT_TECH_EXPERT",
+                "default_model": "deepseek-r1:8b"
             },
             "K8s Specialist": {
-                "model": os.getenv("MODEL_K8S", "qwen2.5-coder:7b"),
-                "prompt": os.getenv("PROMPT_K8S_SPECIALIST")
+                "model_key": "MODEL_K8S",
+                "prompt_key": "PROMPT_K8S_SPECIALIST",
+                "default_model": "qwen2.5-coder:7b"
             },
             "SRE": {
-                "model": os.getenv("MODEL_SRE", "llama3.1:8b"),
-                "prompt": os.getenv("PROMPT_SRE_OBSERVABILITY")
+                "model_key": "MODEL_SRE",
+                "prompt_key": "PROMPT_SRE_OBSERVABILITY",
+                "default_model": "llama3.1:8b"
             },
             "GitHub Specialist": {
-                "model": os.getenv("MODEL_GITHUB", "qwen2.5-coder:7b"),
-                "prompt": os.getenv("PROMPT_GITHUB_SPECIALIST")
+                "model_key": "MODEL_GITHUB",
+                "prompt_key": "PROMPT_GITHUB_SPECIALIST",
+                "default_model": "qwen2.5-coder:7b"
             },
             "JFrog Admin": {
-                "model": os.getenv("MODEL_JFROG", "qwen2.5-coder:7b"),
-                "prompt": os.getenv("PROMPT_JFROG_ADMIN")
+                "model_key": "MODEL_JFROG",
+                "prompt_key": "PROMPT_JFROG_ADMIN",
+                "default_model": "qwen2.5-coder:7b"
             },
             "Database Admin": {
-                "model": os.getenv("MODEL_DB", "gemma3:4b"),
-                "prompt": os.getenv("PROMPT_DB_ADMIN")
+                "model_key": "MODEL_DB",
+                "prompt_key": "PROMPT_DB_ADMIN",
+                "default_model": "gemma3:4b"
             },
             "Document Expert": {
-                "model": os.getenv("MODEL_TECH_EXPERT", "deepseek-r1:8b"),
-                "prompt": "### ROLE: Documentation Specialist. Answer the user's questions strictly using the provided context from the documentation. If the information is not in the context, state that you don't know."
+                "model_key": "MODEL_TECH_EXPERT",
+                "prompt": "### ROLE: Documentation Specialist. Answer the user's questions strictly using the provided context from the documentation. If the information is not in the context, state that you don't know.",
+                "default_model": "deepseek-r1:8b"
             }
         }
 
     def get_response(self, skill, messages, stream=True):
         """
-        Generates a response using the model assigned to the skill.
+        Generates a response using the model assigned to the skill, resolved at runtime.
         """
-        config = self.skill_config.get(skill)
+        config = self.skill_map.get(skill)
         if not config:
             raise ValueError(f"Unknown skill: {skill}")
         
-        model = config["model"]
-        system_prompt = config["prompt"]
+        # Resolve model and prompt from environment or defaults
+        model = os.getenv(config["model_key"], config["default_model"])
+        system_prompt = config.get("prompt") or os.getenv(config.get("prompt_key"), "")
         
         # Prepare messages for Ollama
         ollama_messages = [{"role": "system", "content": system_prompt}] + messages
