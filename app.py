@@ -24,7 +24,7 @@ from dotenv import load_dotenv
 import time
 from orchestrator import DevOpsOrchestrator
 from brain import OllamaBrain
-from mcp_client import check_mcp_status
+from mcp_client import check_mcp_status, check_k8s_status
 from memory import DevOpsMemory
 import concurrent.futures
 
@@ -88,44 +88,56 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Sidebar Connectivity Hub
-st.sidebar.image("assets/logo.png", use_container_width=True)
+if os.path.exists("assets/logo.png"):
+    st.sidebar.image("assets/logo.png", width='stretch')
+else:
+    st.sidebar.markdown("<h2 style='text-align: center; color: #00d4ff;'>🛠️ DevOps Hub</h2>", unsafe_allow_html=True)
+
 st.sidebar.markdown('<div class="sidebar-section">', unsafe_allow_html=True)
 st.sidebar.markdown('<div class="sidebar-header">🔗 Connectivity Hub</div>', unsafe_allow_html=True)
 
 # Status indicators inside a container for better grouping
 with st.sidebar.container():
-    def get_all_statuses(services_dict, orchestrator):
-        """Checks all service statuses in parallel."""
-        def check_single(name, url, orchestrator):
+    @st.cache_data(ttl=30, show_spinner=False)
+    def check_all_statuses(services_to_check):
+        """Checks all service statuses in parallel with caching."""
+        def check_single(name, url):
             if name == "Ollama":
-                return name, orchestrator.brain.check_ollama_status()
+                # We need a fresh check for Ollama but cached for performance
+                from brain import OllamaBrain
+                return name, OllamaBrain().check_ollama_status()
+            elif name == "Kubernetes":
+                return name, check_k8s_status()
             return name, check_mcp_status(url)
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=len(services_dict)) as executor:
-            future_to_service = {executor.submit(check_single, name, url, orchestrator): name for name, url in services_dict.items()}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max(len(services_to_check), 1)) as executor:
+            future_to_service = {executor.submit(check_single, name, url): name for name, url in services_to_check.items()}
             results = {}
             for future in concurrent.futures.as_completed(future_to_service):
-                name, is_up = future.result()
-                results[name] = is_up
+                try:
+                    name, is_up = future.result()
+                    results[name] = is_up
+                except:
+                    pass
             return results
 
-    # Cache status results for 30 seconds
-    if "last_status_check" not in st.session_state or (time.time() - st.session_state.last_status_check > 30):
-        services_to_check = {
-            "Ollama": os.getenv("OLLAMA_URL", "http://localhost:11434"),
-            "K8s MCP": os.getenv("K8S_MCP_URL"),
-            "ChromaDB MCP": os.getenv("CHROMADB_MCP_URL"),
-            "Database MCP": os.getenv("DATABASE_MCP_URL"),
-            "Grafana MCP": os.getenv("GRAFANA_MCP_URL"),
-            "GitHub MCP": os.getenv("GITHUB_MCP_URL"),
-            "JFrog MCP": os.getenv("JFROG_MCP_URL"),
-            "Trivy MCP": os.getenv("TRIVY_MCP_URL"),
-            "K8sGPT MCP": os.getenv("K8SGPT_MCP_URL"),
-        }
-        st.session_state.service_statuses = get_all_statuses(services_to_check, st.session_state.orchestrator)
-        st.session_state.last_status_check = time.time()
+    # Define the services we want to track
+    services_to_check = {
+        "Ollama": os.getenv("OLLAMA_URL", "http://localhost:11434"),
+        "Kubernetes": None,
+        "ChromaDB": os.getenv("CHROMADB_MCP_URL"),
+        "Database": os.getenv("DATABASE_MCP_URL"),
+        "Grafana": os.getenv("GRAFANA_MCP_URL"),
+        "GitHub": os.getenv("GITHUB_MCP_URL"),
+        "JFrog": os.getenv("JFROG_MCP_URL"),
+        "Trivy": os.getenv("TRIVY_MCP_URL"),
+        "K8sGPT": os.getenv("K8SGPT_MCP_URL"),
+    }
+    
+    # Use the cached parallel status checker
+    statuses = check_all_statuses(services_to_check)
 
-    for service, is_up in st.session_state.service_statuses.items():
+    for service, is_up in statuses.items():
         status_class = "status-green" if is_up else "status-red"
         st.sidebar.markdown(f"""
             <div class="status-text">

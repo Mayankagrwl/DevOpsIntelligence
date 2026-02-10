@@ -2,14 +2,14 @@ import os
 import re
 from brain import OllamaBrain
 from memory import DevOpsMemory
-from mcp_client import K8sMCPClient, ChromaMCPClient, DatabaseMCPClient, GrafanaMCPClient, K8sGPTMCPClient
+from mcp_client import K8sNativeClient, ChromaMCPClient, DatabaseMCPClient, GrafanaMCPClient, K8sGPTMCPClient
 import json
 
 class DevOpsOrchestrator:
     def __init__(self):
         self.brain = OllamaBrain()
         self.memory = DevOpsMemory()
-        self.k8s_client = K8sMCPClient()
+        self.k8s_client = K8sNativeClient()
         self.chroma_mcp = ChromaMCPClient()
         self.db_mcp = DatabaseMCPClient()
         self.grafana_mcp = GrafanaMCPClient()
@@ -17,43 +17,54 @@ class DevOpsOrchestrator:
         
     def get_tool_definitions(self):
         """
-        Tool definitions for Ollama — names match containers/kubernetes-mcp-server.
-        These are the names the LLM will output, and execute_tool will route them.
+        Tool definitions for Ollama — leveraging native K8s administration capabilities.
         """
         return [
             {
                 "type": "function",
                 "function": {
-                    "name": "pods_list_in_namespace",
-                    "description": "List all Kubernetes pods in a specific namespace. Use when user asks about pods, workloads, or deployments in a namespace.",
+                    "name": "list_pods",
+                    "description": "List pods in a specific Kubernetes namespace. Use 'all' for all namespaces.",
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "namespace": {"type": "string", "description": "Namespace to list pods from (required)"}
-                        },
-                        "required": ["namespace"]
+                            "namespace": {"type": "string", "description": "Namespace name (default: default, use 'all' for cluster-wide)"}
+                        }
                     }
                 }
             },
             {
                 "type": "function",
                 "function": {
-                    "name": "pods_list",
-                    "description": "List all Kubernetes pods across ALL namespaces. Use when user asks about all pods in the cluster without specifying a namespace.",
+                    "name": "list_deployments",
+                    "description": "List deployments in a specific Kubernetes namespace.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "namespace": {"type": "string", "description": "Namespace name"}
+                        }
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "list_namespaces",
+                    "description": "List all available namespaces in the Kubernetes cluster.",
                     "parameters": {"type": "object", "properties": {}}
                 }
             },
             {
                 "type": "function",
                 "function": {
-                    "name": "pods_log",
-                    "description": "Get logs from a specific Kubernetes pod. Use when the user asks to see logs or debug a specific pod.",
+                    "name": "get_pod_logs",
+                    "description": "Retrieve logs for a specific pod. Useful for troubleshooting and debugging.",
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "name": {"type": "string", "description": "Name of the Pod to get logs from"},
-                            "namespace": {"type": "string", "description": "Namespace of the Pod"},
-                            "tail": {"type": "integer", "description": "Number of lines from end (default: 100)"}
+                            "name": {"type": "string", "description": "Pod name"},
+                            "namespace": {"type": "string", "description": "Pod namespace"},
+                            "tail": {"type": "integer", "description": "Number of lines to retrieve (default: 100)"}
                         },
                         "required": ["name"]
                     }
@@ -62,35 +73,12 @@ class DevOpsOrchestrator:
             {
                 "type": "function",
                 "function": {
-                    "name": "pods_get",
-                    "description": "Get details of a specific Kubernetes pod by name.",
+                    "name": "get_events",
+                    "description": "Get recent Kubernetes events in a namespace for troubleshooting.",
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "name": {"type": "string", "description": "Name of the Pod"},
-                            "namespace": {"type": "string", "description": "Namespace of the Pod"}
-                        },
-                        "required": ["name"]
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "namespaces_list",
-                    "description": "List all Kubernetes namespaces in the cluster.",
-                    "parameters": {"type": "object", "properties": {}}
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "events_list",
-                    "description": "List Kubernetes events for debugging and troubleshooting.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "namespace": {"type": "string", "description": "Optional namespace to filter events"}
+                            "namespace": {"type": "string", "description": "Namespace to check events for"}
                         }
                     }
                 }
@@ -126,33 +114,32 @@ class DevOpsOrchestrator:
         ]
 
     def execute_tool(self, name, args):
-        """Routes tool calls to the correct MCP client."""
+        """Routes tool calls to the native K8s client or MCP clients."""
         try:
-            # --- K8s MCP tools (containers/kubernetes-mcp-server) ---
-            if name == "pods_list_in_namespace":
-                return self.k8s_client.list_pods(namespace=args.get("namespace"))
-            elif name == "pods_list":
-                return self.k8s_client.list_pods()
-            elif name == "pods_log":
-                return self.k8s_client.get_pod_logs(args.get("name"), namespace=args.get("namespace"))
-            elif name == "pods_get":
-                return self.k8s_client.get_pod(args.get("name"), namespace=args.get("namespace"))
-            elif name == "namespaces_list":
-                return self.k8s_client.list_namespaces()
-            elif name == "events_list":
-                return self.k8s_client.list_events(namespace=args.get("namespace"))
-            # --- Legacy tool names (fallback for models that use our old names) ---
-            elif name == "list_pods":
+            # --- Native K8s Tools ---
+            if name in ["list_pods", "pods_list", "pods_list_in_namespace"]:
                 return self.k8s_client.list_pods(namespace=args.get("namespace", "default"))
-            elif name == "get_pod_logs":
-                return self.k8s_client.get_pod_logs(args.get("pod_name") or args.get("name"), namespace=args.get("namespace"))
+            elif name == "list_deployments":
+                return self.k8s_client.list_deployments(namespace=args.get("namespace", "default"))
+            elif name == "list_namespaces":
+                return self.k8s_client.list_namespaces()
+            elif name in ["get_pod_logs", "pods_log"]:
+                return self.k8s_client.get_pod_logs(
+                    args.get("name") or args.get("pod_name"), 
+                    namespace=args.get("namespace", "default"),
+                    tail=args.get("tail", 100)
+                )
+            elif name == "get_events":
+                return self.k8s_client.get_events(namespace=args.get("namespace", "default"))
+            
+            # --- Legacy MCP fallbacks ---
             elif name == "analyze_cluster":
                 return self.k8sgpt_mcp.analyze_cluster()
-            # --- Other MCP tools ---
             elif name == "query_metrics":
                 return self.grafana_mcp.query_metrics(args.get("query"))
             elif name == "query_db":
                 return self.db_mcp.query_db(args.get("query"))
+            
             return {"error": f"Tool '{name}' not found"}
         except Exception as e:
             return {"error": f"Tool execution failed: {str(e)}"}
