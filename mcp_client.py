@@ -1,7 +1,8 @@
 import os
-import requests
+import asyncio
 import json
-from sseclient import SSEClient
+from mcp import ClientSession
+from mcp.client.sse import sse_client
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -9,31 +10,51 @@ load_dotenv()
 class MCPClient:
     def __init__(self, server_url):
         self.server_url = server_url
-        self.session = requests.Session()
+
+    async def get_tools_async(self):
+        """Fetches available tools using official MCP SDK."""
+        if not self.server_url: return []
+        try:
+            async with sse_client(self.server_url) as (read, write):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    result = await session.list_tools()
+                    # SDK returns a ListToolsResult object, convert tools to dict for legacy compatibility
+                    return [{"name": t.name, "description": t.description} for t in result.tools]
+        except Exception as e:
+            print(f"Error fetching tools from {self.server_url}: {e}")
+            return None
+
+    async def call_tool_async(self, tool_name, arguments):
+        """Executes a tool call using official MCP SDK."""
+        if not self.server_url: return {"error": "Server URL not configured"}
+        try:
+            async with sse_client(self.server_url) as (read, write):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    result = await session.call_tool(tool_name, arguments)
+                    # Extract text content for easier processing by the orchestrator
+                    extracted_text = "\n".join([c.text for c in result.content if hasattr(c, 'text')])
+                    try:
+                        # Attempt to parse as JSON if it looks like JSON
+                        return json.loads(extracted_text)
+                    except:
+                        return extracted_text
+        except Exception as e:
+            return {"error": str(e)}
 
     def get_tools(self):
-        """Fetches available tools from the MCP server."""
+        """Sync wrapper for Streamlit/Legacy code."""
         try:
-            # MCP usually has a standard way to list tools via HTTP or SSE initialization
-            # For this implementation, we assume a standard SSE/HTTP structure
-            response = self.session.get(f"{self.server_url}/tools", timeout=5)
-            if response.status_code == 200:
-                return response.json()
-            return []
-        except:
-            return []
+            return asyncio.run(self.get_tools_async())
+        except Exception as e:
+            print(f"Sync Handshake Failed: {e}")
+            return None
 
     def call_tool(self, tool_name, arguments):
-        """Executes a tool call on the MCP server."""
+        """Sync wrapper for Streamlit/Legacy code."""
         try:
-            payload = {
-                "name": tool_name,
-                "arguments": arguments
-            }
-            response = self.session.post(f"{self.server_url}/call", json=payload, timeout=10)
-            if response.status_code == 200:
-                return response.json()
-            return {"error": f"Tool call failed with status {response.status_code}"}
+            return asyncio.run(self.call_tool_async(tool_name, arguments))
         except Exception as e:
             return {"error": str(e)}
 
@@ -54,34 +75,20 @@ class ChromaMCPClient(MCPClient):
         super().__init__(url)
 
     def query_memory(self, query_text, n_results=3):
-        """Actively searching the vector database."""
         return self.call_tool("query_collection", {"query": query_text, "n_results": n_results})
-
-    def add_memory(self, document):
-        """Storing new information into the vector database."""
-        return self.call_tool("add_document", {"document": document})
 
 class DatabaseMCPClient(MCPClient):
     def __init__(self):
         url = os.getenv("DATABASE_MCP_URL")
         super().__init__(url)
 
-    def list_tables(self):
-        return self.call_tool("list_tables", {})
-
     def query_db(self, query):
         return self.call_tool("query", {"sql_query": query})
-
-    def audit_schema(self):
-        return self.call_tool("audit_schema", {})
 
 class GrafanaMCPClient(MCPClient):
     def __init__(self):
         url = os.getenv("GRAFANA_MCP_URL")
         super().__init__(url)
-
-    def get_dashboards(self):
-        return self.call_tool("get_dashboards", {})
 
     def query_metrics(self, query):
         return self.call_tool("query_metrics", {"query": query})
@@ -103,11 +110,11 @@ class K8sGPTMCPClient(MCPClient):
         return self.call_tool("triage", {"namespace": namespace})
 
 def check_mcp_status(url):
-    """Helper for UI status lights."""
+    """Helper for UI status lights using new SDK logic."""
     if not url: return False
     try:
-        # Simple health check if the server supports it, else check reachability
-        response = requests.get(url.replace("/sse", "/health") if "/sse" in url else url, timeout=2)
-        return response.status_code < 500
+        client = MCPClient(url)
+        tools = client.get_tools()
+        return tools is not None # Only green if we got a real response (even if empty list)
     except:
         return False

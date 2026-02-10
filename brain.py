@@ -48,9 +48,10 @@ class OllamaBrain:
             }
         }
 
-    def get_response(self, skill, messages, stream=True):
+    def get_response(self, skill, messages, tools=None, stream=True):
         """
         Generates a response using the model assigned to the skill, resolved at runtime.
+        Supports tool calling if tools are provided.
         """
         config = self.skill_map.get(skill)
         if not config:
@@ -64,10 +65,12 @@ class OllamaBrain:
         ollama_messages = [{"role": "system", "content": system_prompt}] + messages
         
         try:
-            if stream:
-                return self.client.chat(model=model, messages=ollama_messages, stream=True)
-            else:
-                return self.client.chat(model=model, messages=ollama_messages, stream=False)
+            return self.client.chat(
+                model=model, 
+                messages=ollama_messages, 
+                tools=tools,
+                stream=stream
+            )
         except Exception as e:
             return f"Error communicating with Ollama: {str(e)}"
 

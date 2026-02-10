@@ -1,5 +1,32 @@
 import streamlit as st
 import os
+import sys
+
+# --- WINDOWS COMPATIBILITY FIX ---
+# This resolves 'ModuleNotFoundError' for win32 related libs
+# which is common with protected installations like Windows Store Python.
+if os.name == 'nt':
+    import sys
+    
+    # List of modules to mock
+    win32_modules = [
+        "pywintypes", "win32api", "win32con", "win32pipe", 
+        "win32file", "win32job", "win32security", "win32process"
+    ]
+    
+    class MockWin32:
+        def __getattr__(self, name):
+            # Return dummy values or functions for anything requested
+            return lambda *args, **kwargs: None
+            
+    for mod in win32_modules:
+        try:
+            __import__(mod)
+        except ImportError:
+            sys.modules[mod] = MockWin32()
+
+# ---------------------------------
+# ---------------------------------
 from dotenv import load_dotenv
 import time
 from orchestrator import DevOpsOrchestrator
@@ -218,10 +245,18 @@ if prompt := st.chat_input("How can I help you today?"):
             stream = st.session_state.orchestrator.run_step(skill_name, prompt, st.session_state.messages[:-1])
             
             for chunk in stream:
-                if 'message' in chunk and 'content' in chunk['message']:
-                    content = chunk['message']['content']
+                if "status" in chunk:
+                    # Display tool execution status in the reasoning or a dedicated area
+                    thinking_placeholder.info(chunk["status"])
+                    time.sleep(0.5) # Brief pause for visibility
+                
+                if "message" in chunk and "content" in chunk["message"]:
+                    content = chunk["message"]["content"]
                     full_response += content
                     response_placeholder.markdown(full_response + "▌")
+            
+            # Clean up status after completion
+            thinking_placeholder.empty()
             
             thought, final_text = st.session_state.orchestrator.extract_thinking(full_response)
             
@@ -239,3 +274,5 @@ if prompt := st.chat_input("How can I help you today?"):
             
         except Exception as e:
             st.error(f"Error: {str(e)}")
+            import traceback
+            st.expander("Traceback").code(traceback.format_exc())
