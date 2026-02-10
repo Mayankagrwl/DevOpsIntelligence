@@ -1,62 +1,53 @@
 import os
-import asyncio
+import requests
 import json
-from mcp import ClientSession
-from mcp.client.sse import sse_client
+import asyncio
 from dotenv import load_dotenv
 
 load_dotenv()
 
+# --- Lightweight SDK import for health checks only ---
+try:
+    from mcp import ClientSession
+    from mcp.client.sse import sse_client
+    MCP_SDK_AVAILABLE = True
+except ImportError:
+    MCP_SDK_AVAILABLE = False
+
+
 class MCPClient:
+    """
+    Hybrid MCP Client:
+    - Tool execution: Simple HTTP POST (reliable, synchronous)
+    - Health checks: MCP SDK via SSE (accurate handshake verification)
+    """
     def __init__(self, server_url):
         self.server_url = server_url
-
-    async def get_tools_async(self):
-        """Fetches available tools using official MCP SDK."""
-        if not self.server_url: return []
-        try:
-            async with sse_client(self.server_url) as (read, write):
-                async with ClientSession(read, write) as session:
-                    await session.initialize()
-                    result = await session.list_tools()
-                    # SDK returns a ListToolsResult object, convert tools to dict for legacy compatibility
-                    return [{"name": t.name, "description": t.description} for t in result.tools]
-        except Exception as e:
-            print(f"Error fetching tools from {self.server_url}: {e}")
-            return None
-
-    async def call_tool_async(self, tool_name, arguments):
-        """Executes a tool call using official MCP SDK."""
-        if not self.server_url: return {"error": "Server URL not configured"}
-        try:
-            async with sse_client(self.server_url) as (read, write):
-                async with ClientSession(read, write) as session:
-                    await session.initialize()
-                    result = await session.call_tool(tool_name, arguments)
-                    # Extract text content for easier processing by the orchestrator
-                    extracted_text = "\n".join([c.text for c in result.content if hasattr(c, 'text')])
-                    try:
-                        # Attempt to parse as JSON if it looks like JSON
-                        return json.loads(extracted_text)
-                    except:
-                        return extracted_text
-        except Exception as e:
-            return {"error": str(e)}
-
-    def get_tools(self):
-        """Sync wrapper for Streamlit/Legacy code."""
-        try:
-            return asyncio.run(self.get_tools_async())
-        except Exception as e:
-            print(f"Sync Handshake Failed: {e}")
-            return None
+        # Derive the base URL (without /sse) for HTTP tool calls
+        if server_url and server_url.endswith("/sse"):
+            self.base_url = server_url[:-4]  # strip "/sse"
+        else:
+            self.base_url = server_url
 
     def call_tool(self, tool_name, arguments):
-        """Sync wrapper for Streamlit/Legacy code."""
+        """Execute a tool via simple HTTP POST to the MCP server."""
+        if not self.base_url:
+            return {"error": "Server URL not configured"}
         try:
-            return asyncio.run(self.call_tool_async(tool_name, arguments))
+            response = requests.post(
+                f"{self.base_url}/tool",
+                json={"name": tool_name, "arguments": arguments},
+                timeout=30
+            )
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.ConnectionError:
+            return {"error": f"Cannot connect to MCP server at {self.base_url}"}
+        except requests.exceptions.Timeout:
+            return {"error": f"Timeout connecting to MCP server at {self.base_url}"}
         except Exception as e:
             return {"error": str(e)}
+
 
 class K8sMCPClient(MCPClient):
     def __init__(self):
@@ -69,6 +60,7 @@ class K8sMCPClient(MCPClient):
     def get_pod_logs(self, pod_name, namespace="default"):
         return self.call_tool("get_pod_logs", {"pod_name": pod_name, "namespace": namespace})
 
+
 class ChromaMCPClient(MCPClient):
     def __init__(self):
         url = os.getenv("CHROMADB_MCP_URL")
@@ -77,6 +69,7 @@ class ChromaMCPClient(MCPClient):
     def query_memory(self, query_text, n_results=3):
         return self.call_tool("query_collection", {"query": query_text, "n_results": n_results})
 
+
 class DatabaseMCPClient(MCPClient):
     def __init__(self):
         url = os.getenv("DATABASE_MCP_URL")
@@ -84,6 +77,7 @@ class DatabaseMCPClient(MCPClient):
 
     def query_db(self, query):
         return self.call_tool("query", {"sql_query": query})
+
 
 class GrafanaMCPClient(MCPClient):
     def __init__(self):
@@ -96,25 +90,44 @@ class GrafanaMCPClient(MCPClient):
     def get_alerts(self):
         return self.call_tool("get_alerts", {})
 
+
 class K8sGPTMCPClient(MCPClient):
     def __init__(self):
         url = os.getenv("K8SGPT_MCP_URL")
         super().__init__(url)
 
     def analyze_cluster(self):
-        """Perform a full cluster analysis with K8sGPT."""
         return self.call_tool("analyze", {})
 
     def triage_namespace(self, namespace):
-        """Triage a specific namespace."""
         return self.call_tool("triage", {"namespace": namespace})
 
+
 def check_mcp_status(url):
-    """Helper for UI status lights using new SDK logic."""
-    if not url: return False
+    """
+    Health check using the MCP SDK for accurate handshake verification.
+    Falls back to a simple HTTP GET if the SDK is not available.
+    """
+    if not url:
+        return False
+
+    # Method 1: MCP SDK (preferred - true protocol handshake)
+    if MCP_SDK_AVAILABLE:
+        try:
+            async def _check():
+                async with sse_client(url) as (read, write):
+                    async with ClientSession(read, write) as session:
+                        await session.initialize()
+                        result = await session.list_tools()
+                        return result is not None
+            return asyncio.run(_check())
+        except Exception:
+            return False
+
+    # Method 2: Simple HTTP fallback
     try:
-        client = MCPClient(url)
-        tools = client.get_tools()
-        return tools is not None # Only green if we got a real response (even if empty list)
-    except:
+        base_url = url[:-4] if url.endswith("/sse") else url
+        r = requests.get(f"{base_url}/health", timeout=5)
+        return r.status_code == 200
+    except Exception:
         return False

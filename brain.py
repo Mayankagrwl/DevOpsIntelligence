@@ -14,7 +14,7 @@ class OllamaBrain:
             "Technical Expert": {
                 "model_key": "MODEL_TECH_EXPERT",
                 "prompt_key": "PROMPT_TECH_EXPERT",
-                "default_model": "deepseek-r1:8b"
+                "default_model": "qwen2.5-coder:7b"
             },
             "K8s Specialist": {
                 "model_key": "MODEL_K8S",
@@ -44,7 +44,7 @@ class OllamaBrain:
             "Document Expert": {
                 "model_key": "MODEL_TECH_EXPERT",
                 "prompt": "### ROLE: Documentation Specialist. Answer the user's questions strictly using the provided context from the documentation. If the information is not in the context, state that you don't know.",
-                "default_model": "deepseek-r1:8b"
+                "default_model": "qwen2.5-coder:7b"
             }
         }
 
@@ -64,13 +64,17 @@ class OllamaBrain:
         # Prepare messages for Ollama
         ollama_messages = [{"role": "system", "content": system_prompt}] + messages
         
+        # Build kwargs — only pass tools if explicitly provided
+        kwargs = {
+            "model": model,
+            "messages": ollama_messages,
+            "stream": stream,
+        }
+        if tools:
+            kwargs["tools"] = tools
+        
         try:
-            return self.client.chat(
-                model=model, 
-                messages=ollama_messages, 
-                tools=tools,
-                stream=stream
-            )
+            return self.client.chat(**kwargs)
         except Exception as e:
             return f"Error communicating with Ollama: {str(e)}"
 

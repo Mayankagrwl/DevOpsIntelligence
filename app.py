@@ -6,27 +6,20 @@ import sys
 # This resolves 'ModuleNotFoundError' for win32 related libs
 # which is common with protected installations like Windows Store Python.
 if os.name == 'nt':
-    import sys
-    
-    # List of modules to mock
     win32_modules = [
-        "pywintypes", "win32api", "win32con", "win32pipe", 
+        "pywintypes", "win32api", "win32con", "win32pipe",
         "win32file", "win32job", "win32security", "win32process"
     ]
-    
     class MockWin32:
         def __getattr__(self, name):
-            # Return dummy values or functions for anything requested
             return lambda *args, **kwargs: None
-            
     for mod in win32_modules:
         try:
             __import__(mod)
         except ImportError:
             sys.modules[mod] = MockWin32()
+# ---------------------------------
 
-# ---------------------------------
-# ---------------------------------
 from dotenv import load_dotenv
 import time
 from orchestrator import DevOpsOrchestrator
@@ -187,7 +180,6 @@ with st.sidebar.container():
                 if source == "github":
                     st.write("Authenticated with GitHub Token.")
                     st.write("Fetching repositories via GitHub MCP...")
-                    # In a real scenario, we'd use st.session_state.orchestrator.github_mcp
                     st.write("Scanning directories for .md and .txt files...")
                     time.sleep(1)
                     st.write("Found updated technical docs.")
@@ -206,7 +198,6 @@ with st.sidebar.container():
     uploaded_files = st.sidebar.file_uploader("Upload Document(s)", type=["pdf", "txt", "md", "json", "yaml"], accept_multiple_files=True)
     if uploaded_files:
         for uploaded_file in uploaded_files:
-            # Simulate processing and store in memory
             doc_text = f"Manual Upload Content: {uploaded_file.name}"
             st.session_state.memory.store_interaction(f"FileUpload: {uploaded_file.name}", doc_text)
             st.sidebar.write(f"Indexed: {uploaded_file.name}")
@@ -236,37 +227,39 @@ if prompt := st.chat_input("How can I help you today?"):
 
     with st.chat_message("assistant"):
         response_placeholder = st.empty()
-        thinking_placeholder = st.empty()
+        status_placeholder = st.empty()
         
         full_response = ""
         try:
-            # Extract skill name without icon for the orchestrator
+            # Extract skill name without emoji for the orchestrator
             skill_name = active_skill.split(" ", 1)[-1] if " " in active_skill else active_skill
             stream = st.session_state.orchestrator.run_step(skill_name, prompt, st.session_state.messages[:-1])
             
             for chunk in stream:
+                # Tool execution status updates
                 if "status" in chunk:
-                    thinking_placeholder.info(chunk["status"])
+                    status_placeholder.info(chunk["status"])
+                    continue
                 
-                # Identify if this chunk is a tool call (to be hidden) or content (to be shown)
+                # Content chunks (streaming or non-streaming)
                 message = chunk.get("message", {})
                 content = message.get("content", "")
                 
-                has_tool_call = "tool_calls" in message and message["tool_calls"]
-                is_raw_json = '{"name":' in content and '"arguments":' in content
-                
-                if not has_tool_call and not is_raw_json and content:
+                if content:
                     full_response += content
                     response_placeholder.markdown(full_response + "▌")
             
-            # Final render without cursor
-            if full_response:
-                response_placeholder.markdown(full_response)
+            # Clear status and render final response
+            status_placeholder.empty()
             
+            if not full_response:
+                full_response = "I received an empty response. Please try again."
+            
+            # Extract thinking traces (for reasoning models)
             thought, final_text = st.session_state.orchestrator.extract_thinking(full_response)
             
             if thought:
-                with thinking_placeholder.expander("Reasoning Trace", expanded=True):
+                with status_placeholder.expander("Reasoning Trace", expanded=True):
                     st.markdown(thought)
                 response_placeholder.markdown(final_text)
                 assistant_msg = {"role": "assistant", "content": final_text, "think": thought}
