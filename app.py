@@ -257,10 +257,14 @@ if prompt := st.chat_input("How can I help you today?"):
                 message = chunk.get("message", {})
                 content = message.get("content", "")
                 if content:
-                    # Safety filter: don't display raw tool-call JSON to the user.
-                    # This happens when the model generates JSON text instead of structured tools.
-                    if '{"name":' in content and '"arguments":' in content:
+                    # Safety filter: suppress raw JSON tool-calling blocks only.
+                    # We look for chunks that are primarily JSON objects with tool-call signatures.
+                    content_clean = content.strip()
+                    if content_clean.startswith('{') and content_clean.endswith('}') and '"arguments"' in content_clean:
                         continue
+                    if content_clean.startswith('```json') or content_clean.startswith('``` JSON'):
+                         if '"arguments"' in content_clean:
+                             continue
                     full_response += content
                     response_placeholder.markdown(full_response + "▌")
             

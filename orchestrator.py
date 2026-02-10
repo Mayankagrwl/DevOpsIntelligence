@@ -238,26 +238,33 @@ class DevOpsOrchestrator:
             # This handles cases where models don't use the official API but still try to use tools.
             if content and ('"name"' in content or '"arguments"' in content):
                 try:
-                    # Search for the outermost JSON-like structure in the content
-                    # We look for something starting with { and ending with }
-                    match = re.search(r'(\{.*\})', content, re.DOTALL)
+                    # Search for the *first* JSON object that looks like a tool call
+                    match = re.search(r'(\{\s*"name":\s*"[^"]+",\s*"arguments":\s*\{.*?\})', content, re.DOTALL)
+                    if not match:
+                        # Fallback to general object search
+                        match = re.search(r'(\{.*?\})', content, re.DOTALL)
+                    
                     if match:
-                        obj_str = match.group(1)
+                        obj_str = match.group(1).strip()
                         try:
                             tool_json = json.loads(obj_str)
                             name = tool_json.get("name")
                             args = tool_json.get("arguments", {})
                             
-                            # Normalization map
+                            # Normalization map - Align legacy names with new native tools
                             name_map = {
-                                "list_pods": "pods_list_in_namespace",
-                                "pods_list": "pods_list_in_namespace",
-                                "get_pod_logs": "pods_log",
-                                "pods_get": "pods_get"
+                                "pods_list_in_namespace": "list_pods",
+                                "pods_list": "list_pods",
+                                "pods_log": "get_pod_logs",
+                                "pods_get": "list_pods", # Fallback for inspection
+                                "get_pods": "list_pods",
+                                "list_namespaces": "list_namespaces"
                             }
                             mapped_name = name_map.get(name, name)
                             
-                            if mapped_name and (mapped_name in [t["function"]["name"] for t in tools]):
+                            # Verify if the mapped name exists in our current active toolset
+                            active_tool_names = [t["function"]["name"] for t in tools]
+                            if mapped_name and (mapped_name in active_tool_names):
                                 yield {"status": f"🔧 Intercepted tool call: {mapped_name}..."}
                                 
                                 # Execute
