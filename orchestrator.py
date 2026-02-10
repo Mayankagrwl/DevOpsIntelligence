@@ -234,66 +234,83 @@ class DevOpsOrchestrator:
                 # Continue loop so LLM can see tool results and respond
                 continue
             
-            # 2. Fallback: Foolproof detection of tool calls embedded as JSON TEXT in content
-            # This handles cases where models don't use the official API but still try to use tools.
-            if content and ('"name"' in content or '"arguments"' in content):
+            # 2. Fallback: Detection of tool calls embedded as JSON text in content
+            # This handles models that output raw JSON instead of using structured calls.
+            if content and (('"name"' in content or '"function"' in content) and '"arguments"' in content):
                 try:
-                    # Search for the *first* JSON object that looks like a tool call
-                    match = re.search(r'(\{\s*"name":\s*"[^"]+",\s*"arguments":\s*\{.*?\})', content, re.DOTALL)
-                    if not match:
-                        # Fallback to general object search
-                        match = re.search(r'(\{.*?\})', content, re.DOTALL)
+                    # Robust search: Find the first substring that looks like a JSON object
+                    # We look for something that contains name/function and arguments
+                    potential_json = None
                     
-                    if match:
-                        obj_str = match.group(1).strip()
+                    # Try to find the start of a JSON object
+                    start_idx = content.find('{')
+                    if start_idx != -1:
+                        # Extract from the first '{' to the last '}'
+                        end_idx = content.rfind('}')
+                        if end_idx != -1 and end_idx > start_idx:
+                            potential_json = content[start_idx:end_idx+1].strip()
+                    
+                    if potential_json:
                         try:
-                            tool_json = json.loads(obj_str)
-                            name = tool_json.get("name")
+                            tool_json = json.loads(potential_json)
+                            # Handle different possible JSON schemas for tool calls
+                            name = tool_json.get("name") or tool_json.get("function", {}).get("name")
                             args = tool_json.get("arguments", {})
                             
-                            # Normalization map - Align legacy names with new native tools
-                            name_map = {
-                                "pods_list_in_namespace": "list_pods",
-                                "pods_list": "list_pods",
-                                "pods_log": "get_pod_logs",
-                                "pods_get": "list_pods", # Fallback for inspection
-                                "get_pods": "list_pods",
-                                "list_namespaces": "list_namespaces"
-                            }
-                            mapped_name = name_map.get(name, name)
+                            if not name and "name" in tool_json: name = tool_json["name"]
                             
-                            # Verify if the mapped name exists in our current active toolset
-                            active_tool_names = [t["function"]["name"] for t in tools]
-                            if mapped_name and (mapped_name in active_tool_names):
-                                yield {"status": f"🔧 Intercepted tool call: {mapped_name}..."}
+                            if name:
+                                # Normalization map - bridge legacy names to native tools
+                                name_map = {
+                                    "pods_list_in_namespace": "list_pods",
+                                    "pods_list": "list_pods",
+                                    "pods_log": "get_pod_logs",
+                                    "pods_get": "list_pods",
+                                    "get_pods": "list_pods",
+                                    "list_namespaces": "list_namespaces"
+                                }
+                                mapped_name = name_map.get(name, name)
                                 
-                                # Execute
-                                result = self.execute_tool(mapped_name, args)
-                                
-                                # Force a summary response
-                                summary_msg = [
-                                    {"role": "assistant", "content": content},
-                                    {"role": "user", "content": f"The tool '{mapped_name}' returned:\n{json.dumps(result, indent=2)}\n\nSummarize this for me in a natural, helpful way. Skip any raw technical details."}
-                                ]
-                                final_res = self.brain.get_response(skill, current_messages + summary_msg, tools=None, stream=True)
-                                
-                                if isinstance(final_res, str):
-                                    yield {"message": {"content": final_res}}
-                                else:
-                                    for chunk in final_res:
-                                        yield chunk
-                                return
-                        except:
-                            pass
-                except Exception as e:
-                    pass # Fall through if regex or logic fails
+                                # Verify against active toolset
+                                active_tools = [t["function"]["name"] for t in tools]
+                                if mapped_name in active_tools:
+                                    yield {"status": f"🔧 Executing {mapped_name}..."}
+                                    
+                                    # Execute
+                                    result = self.execute_tool(mapped_name, args)
+                                    
+                                    # Formulate a dedicated summary prompt
+                                    summary_prompt = [
+                                        {"role": "user", "content": f"Task: {user_query}\n\nI ran the tool '{mapped_name}' with these arguments: {json.dumps(args)}.\n\nThe cluster returned: {json.dumps(result, indent=2)}\n\nPlease provide a helpful summary of this information for me. Keep it conversational."}
+                                    ]
+                                    
+                                    # Call the brain again to get the final human-readable answer
+                                    final_stream = self.brain.get_response(skill, summary_prompt, tools=None, stream=True)
+                                    
+                                    if isinstance(final_stream, str):
+                                        yield {"message": {"content": final_stream}}
+                                    else:
+                                        for chunk in final_stream:
+                                            yield chunk
+                                    return
+                        except Exception as json_err:
+                            print(f"DEBUG: Failed to parse potential JSON: {json_err}")
+                except Exception as outer_err:
+                    print(f"DEBUG: Fallback tool interception failed: {outer_err}")
             
-            # 3. Final answer — regular text content
-            # If we reached here and haven't returned, this is the final answer.
-            # Safety: If it looks like JSON, but we couldn't execute it, don't show it as a final answer.
+            # 3. Final answer path — handled if no tools were called or if fallback failed
             if content:
-                if '{"name":' in content and '"arguments":' in content:
-                    yield {"message": {"content": "I tried to fetch that information for you but encountered a formatting issue. Could you please specify which pods or namespace you're interested in?"}}
+                # If content still looks like JSON but we haven't processed it, it's likely a malformed tool call
+                if '"name"' in content and '"arguments"' in content:
+                    yield {"message": {"content": "I intercepted a request to check your cluster, but the formatting was slightly off. I'm retrying with a standard request..."}}
+                    # One last attempt without tools to give a generic answer
+                    final_res = self.brain.get_response(skill, current_messages, tools=None, stream=True)
+                    if isinstance(final_res, str):
+                        yield {"message": {"content": final_res}}
+                    else:
+                        for chunk in final_res:
+                            yield chunk
+                    return
                 else:
                     yield {"message": {"content": content}}
                 return
