@@ -2,8 +2,6 @@ import os
 import asyncio
 import json
 import requests
-import subprocess
-import tempfile
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -355,27 +353,108 @@ class K8sNativeClient:
             return {"error": f"Metrics API unavailable: {str(e)}"}
 
     def apply_manifest(self, manifest_yaml, namespace="default"):
-        """Apply a raw YAML manifest using kubectl (for complex apply logic)."""
-        if not self.kubeconfig: return {"error": "KUBECONFIG_PATH not set"}
+        """Apply a raw YAML manifest using native Python Kubernetes client."""
+        if not self.initialized: return {"error": "K8s client not initialized"}
         
         try:
-            # Use kubectl directly for apply logic as it handles diffs better than python client
-            cmd = ["kubectl", "--kubeconfig", self.kubeconfig, "apply", "-f", "-"]
-            if namespace:
-                cmd.extend(["-n", namespace])
+            import yaml
+            docs = list(yaml.safe_load_all(manifest_yaml))
+            results = []
             
-            process = subprocess.Popen(
-                cmd, 
-                stdin=subprocess.PIPE, 
-                stdout=subprocess.PIPE, 
-                stderr=subprocess.PIPE,
-                text=True
-            )
-            stdout, stderr = process.communicate(input=manifest_yaml)
+            for doc in docs:
+                if not doc:
+                    continue
+                kind = doc.get("kind", "").lower()
+                metadata = doc.get("metadata", {})
+                name = metadata.get("name", "unknown")
+                ns = metadata.get("namespace", namespace)
+                
+                try:
+                    if kind == "pod":
+                        self.v1.create_namespaced_pod(ns, doc)
+                    elif kind == "deployment":
+                        self.apps_v1.create_namespaced_deployment(ns, doc)
+                    elif kind == "service":
+                        self.v1.create_namespaced_service(ns, doc)
+                    elif kind == "configmap":
+                        self.v1.create_namespaced_config_map(ns, doc)
+                    elif kind == "secret":
+                        self.v1.create_namespaced_secret(ns, doc)
+                    elif kind == "namespace":
+                        self.v1.create_namespace(doc)
+                    elif kind == "serviceaccount":
+                        self.v1.create_namespaced_service_account(ns, doc)
+                    elif kind == "ingress":
+                        net_v1 = client.NetworkingV1Api()
+                        net_v1.create_namespaced_ingress(ns, doc)
+                    elif kind == "daemonset":
+                        self.apps_v1.create_namespaced_daemon_set(ns, doc)
+                    elif kind == "statefulset":
+                        self.apps_v1.create_namespaced_stateful_set(ns, doc)
+                    elif kind == "job":
+                        batch_v1 = client.BatchV1Api()
+                        batch_v1.create_namespaced_job(ns, doc)
+                    elif kind == "cronjob":
+                        batch_v1 = client.BatchV1Api()
+                        batch_v1.create_namespaced_cron_job(ns, doc)
+                    else:
+                        results.append({"kind": kind, "name": name, "status": f"Unsupported kind: {kind}"})
+                        continue
+                    results.append({"kind": kind, "name": name, "namespace": ns, "status": "Created"})
+                except client.exceptions.ApiException as e:
+                    if e.status == 409:
+                        # Already exists — try to update
+                        try:
+                            if kind == "deployment":
+                                self.apps_v1.replace_namespaced_deployment(name, ns, doc)
+                            elif kind == "service":
+                                self.v1.replace_namespaced_service(name, ns, doc)
+                            elif kind == "configmap":
+                                self.v1.replace_namespaced_config_map(name, ns, doc)
+                            elif kind == "secret":
+                                self.v1.replace_namespaced_secret(name, ns, doc)
+                            else:
+                                results.append({"kind": kind, "name": name, "status": f"Already exists"})
+                                continue
+                            results.append({"kind": kind, "name": name, "namespace": ns, "status": "Updated"})
+                        except Exception as ue:
+                            results.append({"kind": kind, "name": name, "status": f"Update failed: {str(ue)}"})
+                    else:
+                        results.append({"kind": kind, "name": name, "status": f"Error: {e.reason}"})
             
-            if process.returncode != 0:
-                return {"error": stderr.strip()}
-            return {"output": stdout.strip()}
+            return {"resources": results}
+        except Exception as e:
+            return {"error": str(e)}
+
+    def scale_deployment(self, name, replicas, namespace="default"):
+        """Scale a deployment to the specified number of replicas."""
+        if not self.initialized: return {"error": "K8s client not initialized"}
+        try:
+            body = {"spec": {"replicas": int(replicas)}}
+            self.apps_v1.patch_namespaced_deployment_scale(name, namespace, body)
+            return {"status": "Scaled", "deployment": name, "replicas": int(replicas), "namespace": namespace}
+        except Exception as e:
+            return {"error": str(e)}
+
+    def restart_deployment(self, name, namespace="default"):
+        """Restart a deployment by triggering a rollout restart."""
+        if not self.initialized: return {"error": "K8s client not initialized"}
+        try:
+            from datetime import datetime, timezone
+            now = datetime.now(timezone.utc).isoformat()
+            body = {
+                "spec": {
+                    "template": {
+                        "metadata": {
+                            "annotations": {
+                                "kubectl.kubernetes.io/restartedAt": now
+                            }
+                        }
+                    }
+                }
+            }
+            self.apps_v1.patch_namespaced_deployment(name, namespace, body)
+            return {"status": "Restarted", "deployment": name, "namespace": namespace}
         except Exception as e:
             return {"error": str(e)}
 

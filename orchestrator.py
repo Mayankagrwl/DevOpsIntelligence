@@ -54,6 +54,8 @@ class DevOpsOrchestrator:
             _tool("exec_command", "Exec command in pod", {"pod_name": {"type": "string", "description": "Pod name"}, "command": {"type": "string", "description": "Shell command"}, **ns, "container": {"type": "string", "description": "Container name"}}, ["pod_name", "command"]),
             _tool("query_metrics", "Query Prometheus metrics", {"query": {"type": "string", "description": "PromQL query"}}, ["query"]),
             _tool("query_db", "Execute SQL query", {"query": {"type": "string", "description": "SQL query"}}, ["query"]),
+            _tool("scale_deployment", "Scale deployment replicas", {**ns_name, "replicas": {"type": "integer", "description": "Replica count"}}, ["name", "replicas"]),
+            _tool("restart_deployment", "Restart a deployment (rollout)", ns_name, ["name"]),
         ]
 
     def execute_tool(self, name, args):
@@ -106,6 +108,17 @@ class DevOpsOrchestrator:
                 )
             elif name == "get_node_metrics":
                 return self.k8s_client.get_node_metrics()
+            elif name == "scale_deployment":
+                return self.k8s_client.scale_deployment(
+                    args.get("name"),
+                    args.get("replicas", 1),
+                    namespace=args.get("namespace", "default")
+                )
+            elif name == "restart_deployment":
+                return self.k8s_client.restart_deployment(
+                    args.get("name"),
+                    namespace=args.get("namespace", "default")
+                )
             
             elif name == "list_services":
                 return self.k8s_client.list_services(namespace=args.get("namespace", "default"))
@@ -166,7 +179,8 @@ class DevOpsOrchestrator:
             "health", "status", "running", "crashed", "error",
             "analyze", "triage", "diagnose", "describe", "inspect", "info", "version",
             "exec", "run", "cmd", "command", "events", "event",
-            "delete", "remove", "create", "apply", "update", "top", "usage", "resource"
+            "delete", "remove", "create", "apply", "update", "top", "usage", "resource",
+            "scale", "restart", "rollout", "replicas", "deploy"
         ]
         query_lower = user_query.lower()
         needs_tools = any(keyword in query_lower for keyword in env_keywords)
