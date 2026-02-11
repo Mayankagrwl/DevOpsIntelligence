@@ -10,6 +10,7 @@ load_dotenv()
 try:
     from kubernetes import client, config
     from kubernetes.stream import stream
+    import yaml
     K8S_SDK_AVAILABLE = True
 except ImportError:
     K8S_SDK_AVAILABLE = False
@@ -351,6 +352,54 @@ class K8sNativeClient:
             ]
         except Exception as e:
             return {"error": f"Metrics API unavailable: {str(e)}"}
+
+    def get_resource_manifest(self, kind, name, namespace="default"):
+        """Get the full YAML manifest of a resource, stripped of cluster-specific metadata for cloning."""
+        if not self.initialized: return {"error": "K8s client not initialized"}
+        try:
+            # Dynamically resolve the read method
+            kind_lower = kind.lower()
+            obj = None
+            if kind_lower == "pod":
+                obj = self.v1.read_namespaced_pod(name, namespace)
+            elif kind_lower == "deployment":
+                obj = self.apps_v1.read_namespaced_deployment(name, namespace)
+            elif kind_lower == "service":
+                obj = self.v1.read_namespaced_service(name, namespace)
+            elif kind_lower == "configmap":
+                obj = self.v1.read_namespaced_config_map(name, namespace)
+            elif kind_lower == "secret":
+                obj = self.v1.read_namespaced_secret(name, namespace)
+            elif kind_lower == "ingress":
+                net_v1 = client.NetworkingV1Api()
+                obj = net_v1.read_namespaced_ingress(name, namespace)
+            elif kind_lower == "daemonset":
+                obj = self.apps_v1.read_namespaced_daemon_set(name, namespace)
+            elif kind_lower == "statefulset":
+                obj = self.apps_v1.read_namespaced_stateful_set(name, namespace)
+            else:
+                return {"error": f"Unsupported kind for manifest extraction: {kind}"}
+
+            if not obj:
+                return {"error": f"Resource {kind}/{name} not found"}
+
+            # Convert to dict
+            data = client.ApiClient().sanitize_for_serialization(obj)
+            
+            # CRITICAL: Strip cluster-specific fields for cloning
+            if "metadata" in data:
+                m = data["metadata"]
+                keys_to_strip = ["uid", "resourceVersion", "creationTimestamp", "selfLink", "ownerReferences", "managedFields", "generateName"]
+                for key in keys_to_strip:
+                    m.pop(key, None)
+                # Keep name and namespace for now, the agent can change them
+            
+            # Strip status entirely
+            data.pop("status", None)
+
+            return yaml.dump(data, default_flow_style=False)
+        except Exception as e:
+            return {"error": str(e)}
 
     def apply_manifest(self, manifest_yaml, namespace="default"):
         """Apply a raw YAML manifest using native Python Kubernetes client."""

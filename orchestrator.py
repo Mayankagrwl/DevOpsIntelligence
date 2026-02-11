@@ -51,6 +51,7 @@ class DevOpsOrchestrator:
             _tool("create_namespace", "Create a namespace", {"name": {"type": "string", "description": "Namespace name"}}, ["name"]),
             _tool("apply_manifest", "Apply YAML manifest", {"manifest_yaml": {"type": "string", "description": "YAML content"}, **ns}, ["manifest_yaml"]),
             _tool("get_node_metrics", "Get node CPU/memory usage"),
+            _tool("get_resource_manifest", "Get clean YAML for cloning", {"kind": {"type": "string"}, "name": {"type": "string"}, **ns}, ["kind", "name"]),
             _tool("exec_command", "Exec command in pod", {"pod_name": {"type": "string", "description": "Pod name"}, "command": {"type": "string", "description": "Shell command"}, **ns, "container": {"type": "string", "description": "Container name"}}, ["pod_name", "command"]),
             _tool("query_metrics", "Query Prometheus metrics", {"query": {"type": "string", "description": "PromQL query"}}, ["query"]),
             _tool("query_db", "Execute SQL query", {"query": {"type": "string", "description": "SQL query"}}, ["query"]),
@@ -108,6 +109,12 @@ class DevOpsOrchestrator:
                 )
             elif name == "get_node_metrics":
                 return self.k8s_client.get_node_metrics()
+            elif name == "get_resource_manifest":
+                return self.k8s_client.get_resource_manifest(
+                    args.get("kind"),
+                    args.get("name"),
+                    namespace=args.get("namespace", "default")
+                )
             elif name == "scale_deployment":
                 return self.k8s_client.scale_deployment(
                     args.get("name"),
@@ -180,7 +187,7 @@ class DevOpsOrchestrator:
             "analyze", "triage", "diagnose", "describe", "inspect", "info", "version",
             "exec", "run", "cmd", "command", "events", "event",
             "delete", "remove", "create", "apply", "update", "top", "usage", "resource",
-            "scale", "restart", "rollout", "replicas", "deploy"
+            "scale", "restart", "rollout", "replicas", "deploy", "duplicate", "clone", "copy"
         ]
         query_lower = user_query.lower()
         needs_tools = any(keyword in query_lower for keyword in env_keywords)
@@ -370,12 +377,11 @@ class DevOpsOrchestrator:
                 except Exception as outer_err:
                     print(f"DEBUG: Fallback tool interception failed: {outer_err}")
             
-            # 3. Final answer path — handled if no tools were called or if fallback failed
+            # 3. Final answer path — no tools were called
             if content:
-                # If content still looks like JSON but we haven't processed it, it's likely a malformed tool call
+                # If content still looks like JSON but we haven't processed it
                 if '"name"' in content and '"arguments"' in content:
                     yield {"message": {"content": "I intercepted a request to check your cluster, but the formatting was slightly off. I'm retrying with a standard request..."}}
-                    # One last attempt without tools to give a generic answer
                     final_res = self.brain.get_response(skill, current_messages, tools=None, stream=True)
                     if isinstance(final_res, str):
                         yield {"message": {"content": final_res}}
@@ -383,8 +389,44 @@ class DevOpsOrchestrator:
                         for chunk in final_res:
                             yield chunk
                     return
-                else:
-                    yield {"message": {"content": content}}
+                
+                # AUTO-APPLY SAFETY NET: If LLM outputs YAML manifest as text instead of calling apply_manifest
+                if 'apiVersion:' in content and 'kind:' in content:
+                    import re as yaml_re
+                    # Extract YAML from fenced code blocks or inline
+                    yaml_match = yaml_re.search(r'```(?:ya?ml)?\s*\n(.*?)```', content, yaml_re.DOTALL)
+                    if yaml_match:
+                        manifest_yaml = yaml_match.group(1).strip()
+                    else:
+                        # Try to extract bare YAML (lines starting with apiVersion)
+                        lines = content.split('\n')
+                        yaml_lines = []
+                        in_yaml = False
+                        for line in lines:
+                            if line.strip().startswith('apiVersion:'):
+                                in_yaml = True
+                            if in_yaml:
+                                if line.strip() == '' and yaml_lines and not yaml_lines[-1].strip().startswith('-'):
+                                    break
+                                yaml_lines.append(line)
+                        manifest_yaml = '\n'.join(yaml_lines).strip()
+                    
+                    if manifest_yaml and 'apiVersion:' in manifest_yaml:
+                        yield {"status": "🔧 Auto-applying detected manifest..."}
+                        result = self.execute_tool("apply_manifest", {"manifest_yaml": manifest_yaml})
+                        
+                        summary_prompt = [
+                            {"role": "user", "content": f"Task: {user_query}\n\nI applied the manifest and got:\n{json.dumps(result, indent=2)}\n\nProvide a brief summary of what was deployed."}
+                        ]
+                        final_stream = self.brain.get_response(skill, summary_prompt, tools=None, stream=True)
+                        if isinstance(final_stream, str):
+                            yield {"message": {"content": final_stream}}
+                        else:
+                            for chunk in final_stream:
+                                yield chunk
+                        return
+                
+                yield {"message": {"content": content}}
                 return
             
             # Edge case: no content AND no tool calls after tool results
