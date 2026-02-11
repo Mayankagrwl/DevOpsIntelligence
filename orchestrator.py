@@ -17,367 +17,43 @@ class DevOpsOrchestrator:
         
     def get_tool_definitions(self):
         """
-        Tool definitions for Ollama — leveraging native K8s administration capabilities.
+        Compact tool definitions — minimized descriptions for faster LLM inference.
+        Each description is kept under 10 words to reduce token overhead.
         """
+        def _tool(name, desc, props=None, required=None):
+            """Helper to build a tool definition concisely."""
+            t = {"type": "function", "function": {"name": name, "description": desc, "parameters": {"type": "object", "properties": props or {}}}}
+            if required:
+                t["function"]["parameters"]["required"] = required
+            return t
+
+        ns = {"namespace": {"type": "string", "description": "K8s namespace"}}
+        ns_name = {**ns, "name": {"type": "string", "description": "Resource name"}}
+
         return [
-            {
-                "type": "function",
-                "function": {
-                    "name": "list_pods",
-                    "description": "List pods in a specific Kubernetes namespace. Use 'all' for all namespaces.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "namespace": {"type": "string", "description": "Namespace name (default: default, use 'all' for cluster-wide)"}
-                        }
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "list_deployments",
-                    "description": "List deployments in a specific Kubernetes namespace.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "namespace": {"type": "string", "description": "Namespace name"}
-                        }
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "list_namespaces",
-                    "description": "List all available namespaces in the Kubernetes cluster.",
-                    "parameters": {"type": "object", "properties": {}}
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "get_pod_logs",
-                    "description": "Retrieve logs for a specific pod. Useful for troubleshooting and debugging.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "name": {"type": "string", "description": "Pod name"},
-                            "namespace": {"type": "string", "description": "Pod namespace"},
-                            "tail": {"type": "integer", "description": "Number of lines to retrieve (default: 100)"}
-                        },
-                        "required": ["name"]
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "get_pod_details",
-                    "description": "Get complete metadata for a specific pod (equivalent to 'kubectl describe'). Includes images, container states, and conditions.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "name": {"type": "string", "description": "Pod name"},
-                            "namespace": {"type": "string", "description": "Pod namespace (default: default)"}
-                        },
-                        "required": ["name"]
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "get_deployment_details",
-                    "description": "Get detailed metadata for a specific deployment. Includes replicas, update strategy, and selection markers.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "name": {"type": "string", "description": "Deployment name"},
-                            "namespace": {"type": "string", "description": "Namespace (default: default)"}
-                        },
-                        "required": ["name"]
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "get_events",
-                    "description": "Get recent Kubernetes events in a namespace for troubleshooting.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "namespace": {"type": "string", "description": "Namespace to check events for"}
-                        }
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "list_services",
-                    "description": "List services in a specific Kubernetes namespace. Use 'all' for all namespaces.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "namespace": {"type": "string", "description": "Namespace name (default: default)"}
-                        }
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "get_service_details",
-                    "description": "Get detailed metadata for a specific service (ports, selector, type).",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "name": {"type": "string", "description": "Service name"},
-                            "namespace": {"type": "string", "description": "Namespace (default: default)"}
-                        },
-                        "required": ["name"]
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "list_configmaps",
-                    "description": "List configmaps in a specific namespace.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "namespace": {"type": "string", "description": "Namespace (default: default)"}
-                        }
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "get_configmap_details",
-                    "description": "Get keys and metadata for a specific configmap.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "name": {"type": "string", "description": "ConfigMap name"},
-                            "namespace": {"type": "string", "description": "Namespace (default: default)"}
-                        },
-                        "required": ["name"]
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "list_secrets",
-                    "description": "List secrets in a specific namespace.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "namespace": {"type": "string", "description": "Namespace (default: default)"}
-                        }
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "get_secret_details",
-                    "description": "Get keys and metadata for a specific secret (does not reveal values by default).",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "name": {"type": "string", "description": "Secret name"},
-                            "namespace": {"type": "string", "description": "Namespace (default: default)"}
-                        },
-                        "required": ["name"]
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "list_nodes",
-                    "description": "List all physical/virtual nodes in the cluster with status and version.",
-                    "parameters": {"type": "object", "properties": {}}
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "get_node_details",
-                    "description": "Get exhaustive metadata for a specific cluster node.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "name": {"type": "string", "description": "Node name"}
-                        },
-                        "required": ["name"]
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "get_cluster_info",
-                    "description": "Get overall cluster information and Kubernetes version.",
-                    "parameters": {"type": "object", "properties": {}}
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "delete_resource",
-                    "description": "Delete a Kubernetes resource (Pod, Deployment, Service, etc.). CAUTION: This is destructive.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "kind": {"type": "string", "description": "Resource kind (pod, deployment, service, secret, configmap)"},
-                            "name": {"type": "string", "description": "Resource name"},
-                            "namespace": {"type": "string", "description": "Namespace (default: default)"}
-                        },
-                        "required": ["kind", "name"]
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "create_namespace",
-                    "description": "Create a new Kubernetes namespace.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "name": {"type": "string", "description": "Name of the new namespace"}
-                        },
-                        "required": ["name"]
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "apply_manifest",
-                    "description": "Apply a Kubernetes manifest (YAML) to the cluster. Equivalent to 'kubectl apply -f'.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "manifest_yaml": {"type": "string", "description": "The complete YAML content of the manifest"},
-                            "namespace": {"type": "string", "description": "Target namespace (optional)"}
-                        },
-                        "required": ["manifest_yaml"]
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "get_node_metrics",
-                    "description": "Get resource usage metrics (CPU/Memory) for all nodes.",
-                    "parameters": {"type": "object", "properties": {}}
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "exec_command",
-                    "description": "Execute a shell command inside a pod's container. Use this to fetch config files, check processes, or run internal diagnostics.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "pod_name": {"type": "string", "description": "Name of the pod"},
-                            "command": {"type": "string", "description": "Shell command to run (e.g., 'ls -la', 'cat /etc/hosts')"},
-                            "namespace": {"type": "string", "description": "Pod namespace (default: default)"},
-                            "container": {"type": "string", "description": "Specific container name (optional)"}
-                        },
-                        "required": ["pod_name", "command"]
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "delete_resource",
-                    "description": "Delete a Kubernetes resource (Pod, Deployment, Service, etc.). CAUTION: This is destructive.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "kind": {"type": "string", "description": "Resource kind (pod, deployment, service, secret, configmap)"},
-                            "name": {"type": "string", "description": "Resource name"},
-                            "namespace": {"type": "string", "description": "Namespace (default: default)"}
-                        },
-                        "required": ["kind", "name"]
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "create_namespace",
-                    "description": "Create a new Kubernetes namespace.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "name": {"type": "string", "description": "Name of the new namespace"}
-                        },
-                        "required": ["name"]
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "apply_manifest",
-                    "description": "Apply a Kubernetes manifest (YAML) to the cluster. Equivalent to 'kubectl apply -f'.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "manifest_yaml": {"type": "string", "description": "The complete YAML content of the manifest"},
-                            "namespace": {"type": "string", "description": "Target namespace (optional)"}
-                        },
-                        "required": ["manifest_yaml"]
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "get_node_metrics",
-                    "description": "Get resource usage metrics (CPU/Memory) for all nodes.",
-                    "parameters": {"type": "object", "properties": {}}
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "query_metrics",
-                    "description": "Query Grafana/Prometheus metrics using PromQL.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "query": {"type": "string", "description": "PromQL query string"}
-                        },
-                        "required": ["query"]
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "query_db",
-                    "description": "Execute a SQL query against the database.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "query": {"type": "string", "description": "SQL query string"}
-                        },
-                        "required": ["query"]
-                    }
-                }
-            }
+            _tool("list_pods", "List pods in namespace", ns),
+            _tool("list_deployments", "List deployments in namespace", ns),
+            _tool("list_namespaces", "List all cluster namespaces"),
+            _tool("get_pod_logs", "Get pod logs", {**ns_name, "tail": {"type": "integer", "description": "Lines"}}, ["name"]),
+            _tool("get_pod_details", "Describe a pod", ns_name, ["name"]),
+            _tool("get_deployment_details", "Describe a deployment", ns_name, ["name"]),
+            _tool("get_events", "Get namespace events", ns),
+            _tool("list_services", "List services in namespace", ns),
+            _tool("get_service_details", "Describe a service", ns_name, ["name"]),
+            _tool("list_configmaps", "List configmaps", ns),
+            _tool("get_configmap_details", "Describe a configmap", ns_name, ["name"]),
+            _tool("list_secrets", "List secrets", ns),
+            _tool("get_secret_details", "Describe a secret", ns_name, ["name"]),
+            _tool("list_nodes", "List cluster nodes"),
+            _tool("get_node_details", "Describe a node", {"name": {"type": "string", "description": "Node name"}}, ["name"]),
+            _tool("get_cluster_info", "Get cluster version info"),
+            _tool("delete_resource", "Delete a K8s resource", {"kind": {"type": "string", "description": "Resource kind"}, **ns_name}, ["kind", "name"]),
+            _tool("create_namespace", "Create a namespace", {"name": {"type": "string", "description": "Namespace name"}}, ["name"]),
+            _tool("apply_manifest", "Apply YAML manifest", {"manifest_yaml": {"type": "string", "description": "YAML content"}, **ns}, ["manifest_yaml"]),
+            _tool("get_node_metrics", "Get node CPU/memory usage"),
+            _tool("exec_command", "Exec command in pod", {"pod_name": {"type": "string", "description": "Pod name"}, "command": {"type": "string", "description": "Shell command"}, **ns, "container": {"type": "string", "description": "Container name"}}, ["pod_name", "command"]),
+            _tool("query_metrics", "Query Prometheus metrics", {"query": {"type": "string", "description": "PromQL query"}}, ["query"]),
+            _tool("query_db", "Execute SQL query", {"query": {"type": "string", "description": "SQL query"}}, ["query"]),
         ]
 
     def execute_tool(self, name, args):
@@ -504,6 +180,61 @@ class DevOpsOrchestrator:
                 return
             for chunk in response_stream:
                 yield chunk
+            return
+        
+        # === FAST-PATH SHORT-CIRCUIT ===
+        # For simple, unambiguous queries, skip the LLM and execute directly.
+        fast_map = {
+            "list pods": ("list_pods", {}),
+            "get pods": ("list_pods", {}),
+            "show pods": ("list_pods", {}),
+            "list nodes": ("list_nodes", {}),
+            "get nodes": ("list_nodes", {}),
+            "show nodes": ("list_nodes", {}),
+            "list namespaces": ("list_namespaces", {}),
+            "get namespaces": ("list_namespaces", {}),
+            "show namespaces": ("list_namespaces", {}),
+            "list services": ("list_services", {}),
+            "get services": ("list_services", {}),
+            "show services": ("list_services", {}),
+            "get events": ("get_events", {}),
+            "show events": ("get_events", {}),
+            "cluster info": ("get_cluster_info", {}),
+            "node metrics": ("get_node_metrics", {}),
+            "top nodes": ("get_node_metrics", {}),
+        }
+        
+        # Check for namespace-specific patterns like "list pods in kube-system"
+        ns_match = re.match(r'(?:list|get|show)\s+(pods|services|deployments|events|configmaps|secrets)\s+(?:in\s+)?(\S+)', query_lower)
+        
+        fast_tool = None
+        fast_args = {}
+        
+        if ns_match:
+            resource_map = {
+                "pods": "list_pods", "services": "list_services",
+                "deployments": "list_deployments", "events": "get_events",
+                "configmaps": "list_configmaps", "secrets": "list_secrets",
+            }
+            fast_tool = resource_map.get(ns_match.group(1))
+            fast_args = {"namespace": ns_match.group(2)}
+        elif query_lower.strip() in fast_map:
+            fast_tool, fast_args = fast_map[query_lower.strip()]
+        
+        if fast_tool:
+            yield {"status": f"⚡ Fast-path: Executing {fast_tool}..."}
+            result = self.execute_tool(fast_tool, fast_args)
+            
+            # Ask LLM to format the result nicely (streaming)
+            summary_prompt = [
+                {"role": "user", "content": f"Task: {user_query}\n\nTool '{fast_tool}' returned:\n{json.dumps(result, indent=2)}\n\nProvide a helpful summary. Use tables where appropriate."}
+            ]
+            final_stream = self.brain.get_response(skill, summary_prompt, tools=None, stream=True)
+            if isinstance(final_stream, str):
+                yield {"message": {"content": final_stream}}
+            else:
+                for chunk in final_stream:
+                    yield chunk
             return
         
         # === TOOL PATH: ReAct loop ===

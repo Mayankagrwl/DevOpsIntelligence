@@ -15,7 +15,7 @@ class OllamaBrain:
                 "model_key": "MODEL_TECH_EXPERT",
                 "prompt_key": "PROMPT_TECH_EXPERT",
                 "prompt": "### ROLE: Principal Cloud Architect & Technical Expert. \n### FORMATTING:\n1. Use **tables** for comparing data or listing resources.\n2. Use **mermaid diagrams** for architectural explanations.\n3. Wrap all code/commands in triple backticks with correct language highlighting.\n4. Use GitHub-style alerts (e.g., > [!IMPORTANT]) for critical warnings.\n### TASKS:\n- Provide deep-dive technical explanations.\n- When comparing technologies, use a trade-off matrix (table).",
-                "default_model": "deepseek-r1:8b"
+                "default_model": "qwen2.5-coder:7b"
             },
             "K8s Specialist": {
                 "model_key": "MODEL_K8S",
@@ -27,7 +27,7 @@ class OllamaBrain:
                 "model_key": "MODEL_SRE",
                 "prompt_key": "PROMPT_SRE_OBSERVABILITY",
                 "prompt": "### ROLE: Site Reliability Engineer (Senior). Focus on SLIs, SLOs, and MTTR.\n### OPERATIONAL GOALS:\n- Identify failing services using `query_metrics` (Prometheus) and `get_events`.\n- Correlate spikes in latency with cluster-level changes.\n- Use `analyze_cluster` (K8sGPT) for AI-driven post-mortem summaries.\n### FORMATTING:\n- Use **bold headers** for different investigation phases.\n- Use **blockquotes** for log highlights.\n- Keep answers operational and data-driven.",
-                "default_model": "deepseek-r1:8b"
+                "default_model": "qwen2.5-coder:7b"
             },
             "GitHub Specialist": {
                 "model_key": "MODEL_GITHUB",
@@ -80,6 +80,10 @@ class OllamaBrain:
             "model": model,
             "messages": ollama_messages,
             "stream": stream,
+            "options": {
+                "num_ctx": 4096,      # Reduced context window for faster inference
+                "num_predict": 1024,  # Cap response length
+            },
         }
         if tools:
             kwargs["tools"] = tools
