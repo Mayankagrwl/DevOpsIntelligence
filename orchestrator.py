@@ -55,6 +55,7 @@ class DevOpsOrchestrator:
             _tool("exec_command", "Exec command in pod", {"pod_name": {"type": "string", "description": "Pod name"}, "command": {"type": "string", "description": "Shell command"}, **ns, "container": {"type": "string", "description": "Container name"}}, ["pod_name", "command"]),
             _tool("query_metrics", "Query Prometheus metrics", {"query": {"type": "string", "description": "PromQL query"}}, ["query"]),
             _tool("query_db", "Execute SQL query", {"query": {"type": "string", "description": "SQL query"}}, ["query"]),
+            _tool("create_pod", "Create a pod", {"name": {"type": "string"}, "image": {"type": "string"}, "command": {"type": "string"}, "args": {"type": "array", "items": {"type": "string"}}, **ns}, ["name", "image"]),
             _tool("scale_deployment", "Scale deployment replicas", {**ns_name, "replicas": {"type": "integer", "description": "Replica count"}}, ["name", "replicas"]),
             _tool("restart_deployment", "Restart a deployment (rollout)", ns_name, ["name"]),
         ]
@@ -125,6 +126,14 @@ class DevOpsOrchestrator:
                 return self.k8s_client.restart_deployment(
                     args.get("name"),
                     namespace=args.get("namespace", "default")
+                )
+            elif name == "create_pod":
+                return self.k8s_client.create_pod(
+                    args.get("name"),
+                    args.get("image"),
+                    namespace=args.get("namespace", "default"),
+                    command=args.get("command"),
+                    args=args.get("args")
                 )
             
             elif name == "list_services":
@@ -294,7 +303,22 @@ class DevOpsOrchestrator:
                         args = tool_call["function"]["arguments"]
                     
                     # Notify UI
-                    yield {"status": f"🔧 Executing {name}..."}
+                    # Notify UI with detailed arguments
+                    arg_str = json.dumps(args)
+                    if name == "apply_manifest":
+                        msg = "🔧 Applying manifest..."
+                        # Try to show a preview if it's a string
+                        manifest = args.get("manifest_yaml", "")
+                        if len(manifest) > 50:
+                            msg = f"🔧 Applying manifest:\n```yaml\n{manifest[:100]}...\n```"
+                        else:
+                            msg = f"🔧 Applying manifest:\n```yaml\n{manifest}\n```"
+                        yield {"status": msg}
+                    elif name == "exec_command":
+                        cmd = args.get("command", "")
+                        yield {"status": f"🔧 Executing command in {args.get('pod_name')}:\n`{cmd}`"}
+                    else:
+                        yield {"status": f"🔧 Executing {name} with args: {arg_str}"}
                     
                     # Execute and add result to conversation
                     result = self.execute_tool(name, args)

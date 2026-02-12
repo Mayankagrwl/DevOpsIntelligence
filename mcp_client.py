@@ -401,6 +401,32 @@ class K8sNativeClient:
         except Exception as e:
             return {"error": str(e)}
 
+    def create_pod(self, name, image, namespace="default", command=None, args=None):
+        """Create a single pod (like kubectl run)."""
+        if not self.initialized: return {"error": "K8s client not initialized"}
+        try:
+            pod_manifest = {
+                "apiVersion": "v1",
+                "kind": "Pod",
+                "metadata": {"name": name, "namespace": namespace},
+                "spec": {
+                    "containers": [{
+                        "name": name,
+                        "image": image,
+                        "command": command.split() if command else None,
+                        "args": args if args else None
+                    }]
+                }
+            }
+            # Filter None values
+            if not command: pod_manifest["spec"]["containers"][0].pop("command", None)
+            if not args: pod_manifest["spec"]["containers"][0].pop("args", None)
+
+            self.v1.create_namespaced_pod(namespace, pod_manifest)
+            return {"status": "Created", "pod": name, "namespace": namespace}
+        except Exception as e:
+            return {"error": f"Failed to create pod: {str(e)}"}
+
     def apply_manifest(self, manifest_yaml, namespace="default"):
         """Apply a raw YAML manifest using native Python Kubernetes client."""
         if not self.initialized: return {"error": "K8s client not initialized"}
